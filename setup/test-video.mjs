@@ -350,4 +350,51 @@ await test('reels: stretches per chapter, ranges checked, numbering never reuses
   assert.ok(plans.every((p) => p.scenes.every((x) => !('chapter' in x))), 'chapters stay with the video');
 });
 
+
+await test('channel folders: named <channel>-videos, never over files, started from a reels brand as a copy', async () => {
+  const W = await import('./new-workspace.mjs');
+  const root = tmp(), registry = path.join(tmp(), 'channels.json');
+  assert.equal(path.basename(W.folderFor(path.join(root, 'Space Facts'))), 'space-facts-videos');
+  assert.equal(path.basename(W.folderFor(path.join(root, 'acme-videos'))), 'acme-videos');
+  const r = W.makeWorkspace(path.join(root, 'space'), { registry });
+  for (const f of ['CLAUDE.md', 'brand/brand.json', 'brand/facts.md', 'brand/voice.md', '.claude/skills/channel-setup/SKILL.md']) assert.ok(fs.existsSync(path.join(r.dir, f)), f);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(r.dir, 'brand', 'brand.json'), 'utf8')).slug, 'space');
+  assert.throws(() => W.makeWorkspace(path.join(root, 'space'), { registry }), /already has files/);
+  const reels = tmp(); fs.mkdirSync(path.join(reels, 'brand'));
+  fs.writeFileSync(path.join(reels, 'brand', 'brand.json'), JSON.stringify({ name: 'acme', slug: 'acme', niche: { topic: 'AI for small shops', keywords: ['ai tools'] }, colors: { accent: '#2255EE' }, voice: { voice_id: 'v1', voice_name: 'Brian', pronunciation: { acme: 'ack me' } }, cta: { default: 'follow' } }));
+  fs.writeFileSync(path.join(reels, 'brand', 'facts.md'), '# facts\n| a | b | c | d |\n');
+  const r2 = W.makeWorkspace(path.join(root, 'acme'), { reels, registry });
+  const b = JSON.parse(fs.readFileSync(path.join(r2.dir, 'brand', 'brand.json'), 'utf8'));
+  assert.equal(b.name, 'acme'); assert.equal(b.voice.voice_id, 'v1'); assert.equal(b.voice.speed, 1); assert.deepEqual(b.niche.search_terms, ['ai tools']);
+  assert.equal(b.reels_folder, reels); assert.equal(b.cta.line, '', 'a reel call to action is not a video one');
+  assert.ok(!fs.lstatSync(path.join(r2.dir, 'brand')).isSymbolicLink(), 'each channel owns its brand files');
+  assert.equal(JSON.parse(fs.readFileSync(registry, 'utf8')).length, 2);
+});
+
+await test('a channel folder names the YouTube sign-in and the default privacy; never public by default', async () => {
+  const ch = tmp(); fs.mkdirSync(path.join(ch, 'brand')); fs.mkdirSync(path.join(ch, 'videos'));
+  fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ name: 'Space', slug: 'space', youtube: { privacy: 'unlisted' } }));
+  const d = fakeFolder(); const v = path.join(ch, 'videos', 'v1'); fs.cpSync(d, v, { recursive: true });
+  const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-space.json'), JSON.stringify({ client_id: 'id', client_secret: 's', refresh_token: 'rt' }));
+  const r = await yt.upload(v, { fetchImpl: fakeYouTube().fetchImpl, credDir: c, log: () => {} });
+  assert.equal(r.meta.status.privacyStatus, 'unlisted');
+  fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ name: 'Space', slug: 'space', youtube: { privacy: 'public' } }));
+  assert.equal((await yt.upload(v, { fetchImpl: fakeYouTube().fetchImpl, credDir: c, log: () => {} })).meta.status.privacyStatus, 'private');
+  const f = fakeYouTube();
+  await yt.upload(v, { yes: true, fetchImpl: f.fetchImpl, credDir: c, log: () => {} });   // uses youtube-space.json, not youtube-default.json
+  assert.ok(f.calls.some((x) => x.url.includes('token')));
+});
+
+await test('reels from a channel folder go to the linked Reel Kit brand folder', async () => {
+  const R = await import('../studio/tools/reels.mjs');
+  const reels = tmp(); fs.mkdirSync(path.join(reels, 'brand')); fs.writeFileSync(path.join(reels, 'brand', 'brand.json'), '{}'); fs.mkdirSync(path.join(reels, 'reels'));
+  const ch = tmp(); fs.mkdirSync(path.join(ch, 'brand')); fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ slug: 'space', reels_folder: reels }));
+  const d = path.join(ch, 'videos', 'moon'); fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify({ scenes: [{ template: 't', props: {}, narration: 'One two three.' }] }));
+  const [p] = R.planReels({ dir: d, name: 'moon', cfg: { style: 'clean-shapes' } }, [[1, 1]]);
+  assert.equal(p.dir, path.join(reels, 'reels', 'moon-reel-1'));
+  fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ slug: 'space' }));
+  assert.throws(() => R.planReels({ dir: d, name: 'moon', cfg: { style: 'clean-shapes' } }, [[1, 1]]), /reels_folder/);
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

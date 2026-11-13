@@ -1,27 +1,42 @@
 # BagelUnit Video Kit
 
-Turns a topic into a long or standard 1920x1080 video: outline, script, voice, animated scenes in one of 19 styles, chapters, thumbnail, and a YouTube upload. The BagelUnit Reel Kit makes the vertical videos; this kit makes the wide ones.
+Make YouTube videos with Claude Code: give it a topic and it researches it, maps the video from start to end for your approval, writes the script, voices it, animates every scene in one of 19 styles, checks the facts and the file, and uploads it to your channel, privately, once you say yes.
 
-## Set up
+- **Long or standard, 1920x1080.** A two-minute explainer or an hour-long deep dive: there is no length limit; past about 20 minutes it suggests splitting into parts.
+- **Researched, with sources.** Every number said or shown must come from the video's research or your cleared facts. A fact check runs before the voice and again before upload.
+- **You approve twice.** Nothing is voiced before you approve the map, and nothing is uploaded before you approve the finished video. Uploads are private until you say otherwise.
+- **One folder per channel.** Run several YouTube channels from one kit, each with its own topic, voice, colours, facts and sign-in.
+- **A dashboard** for each channel: what needs you, every video's step, a calendar, voice credits left, and a card that plays each video.
+- **Reels too.** With the BagelUnit Reel Kit, the best stretches of a video become vertical reels in the same style.
 
-1. Install the BagelUnit Reel Kit first (it provides the voice tool, the headless browser and the fonts).
-2. `bash setup/install.sh` (Windows: `node setup/install.mjs`). It checks ffmpeg and the Reel Kit engine and installs the skill `bagelunit-video`.
-3. `node ~/.claude/skills/bagelunit-video/tools/video.mjs doctor` shows anything missing.
+The vertical reels are made by its sister kit, the [BagelUnit Reel Kit](https://github.com/bagelunit/bagelunit-reel-kit), which this kit needs installed first (it provides the voice, the headless browser, the fonts and the sound effects).
 
-A real voice needs the ElevenLabs key file from the Reel Kit setup. Without it, `video stand-in` makes a tone so everything else can be built and checked.
+## Start here
 
-## Make a video
+1. **Install the BagelUnit Reel Kit** (its README, `bash setup/install.sh`). It sets up the voice (an ElevenLabs key) and everything the videos are drawn with.
+2. **Install this kit:** in this folder, `bash setup/install.sh` (Windows: `node setup/install.mjs`).
+3. **Make your first channel:** open Claude Code in this folder and type `/video-setup`.
+4. **Make a video:** open Claude Code in the new channel folder and type `/bagelunit-video` with your topic.
 
-Open Claude Code in the folder where the video should live and type `/bagelunit-video`. It follows `studio/SKILL.md`: pick a style, research the topic (every fact with its source, in `research.md`), then a report and a map of the video from start to end for you to approve, with a suggestion to split it into parts if it runs long. Only after your go-ahead: script, scenes, a fact check of every number, voice (after a check that your ElevenLabs credits are enough), render, a quality check of the file, and your yes on the finished video before it can be uploaded. There is no length limit.
+The full guide, with every step, what it costs and how to connect YouTube, is **[SETUP.md](SETUP.md)**. Every command is in **[COMMANDS.md](COMMANDS.md)**.
 
-Run it inside a BagelUnit Reel Kit brand folder and the video goes in `videos/<name>` and uses the brand's voice, cleared facts and call to action. The upload is a dry run until you add `--yes`, and it is private by default.
+## What a video goes through
 
-## Parts
+```
+topic -> style -> research (sources) -> report and map -> YOUR GO-AHEAD
+      -> script -> scenes -> fact check -> voice -> render -> quality check -> thumbnail and YouTube text
+      -> YOUR YES -> upload (private) -> reels (optional) -> tidy
+```
+
+## What is in this folder
 
 | Folder | What |
 |---|---|
-| `studio/SKILL.md` | the work order Claude follows |
-| `studio/tools/` | `video.mjs` (commands), `scenes.mjs` (planner and renderer), `checks.mjs` (fact check, approvals, QA, tidy), `youtube.mjs` (sign-in and upload) |
-| `studio/styles/` | the 19 scene styles (wide), copied from the bagelunit-styles repo by its sync script |
-| `studio/dashboard/` | the video dashboard (`video dashboard`): what needs you, every video's step, a calendar, a card that plays each video |
-| `setup/` | installer, repo scan, tests |
+| `studio/` | the engine, installed as the Claude Code skill `bagelunit-video`: the work order (`SKILL.md`), the commands (`tools/`), the 19 scene styles, the dashboard and the playbook |
+| `template/` | a channel folder, copied by `/video-setup` for each channel |
+| `setup/` | the installer, the channel folder maker, the repo scan and the tests |
+| `docs/` | notes for people changing the kit |
+
+## Licence
+
+Free to use for your own videos and your clients' (see [LICENSE](LICENSE)). The videos you make are yours.

@@ -40,4 +40,4 @@ else fs.cpSync(STUDIO, TARGET, { recursive: true });
 say(true, `${link ? 'linked' : 'copied'} studio/ to ${TARGET}`);
 const tools = path.join(TARGET, 'tools', 'video.mjs');
 say(null, `the command: node ${tools} doctor`);
-console.log('\nNext: open Claude Code in a folder where the video should live and type /bagelunit-video (the skill is in studio/SKILL.md).');
+console.log('\nNext: open Claude Code in this kit folder and type /video-setup. It makes a folder for your YouTube channel and asks about it.');

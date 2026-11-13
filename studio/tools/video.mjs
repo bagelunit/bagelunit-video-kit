@@ -142,9 +142,9 @@ function voice(video, flags) {
   if (scenes.standInIsActive?.(video.dir)) fs.rmSync(path.join(video.dir, 'audio', 'vo.mp3'), { force: true });
   const chunks = chunkScript(fs.readFileSync(script, 'utf8'));
   // natural pace for long videos: the Reel Kit's voice tool speeds reels up (x1.15); a video keeps x1.0 unless video.json "voice_speed" says otherwise
-  const speed = Number(flags.speed && flags.speed !== true ? flags.speed : video.cfg.voice_speed ?? 1) || 1;
-  if (speed < 0.7 || speed > 1.3) die(`voice_speed ${speed} is out of range (0.7 to 1.3)`);
   const brand = checks.findBrand(video.dir);
+  const speed = Number(flags.speed && flags.speed !== true ? flags.speed : video.cfg.voice_speed ?? brand?.cfg.voice?.speed ?? 1) || 1;
+  if (speed < 0.7 || speed > 1.3) die(`voice_speed ${speed} is out of range (0.7 to 1.3)`);
   const voiceCfg = video.cfg.voice || (brand?.cfg.voice?.voice_id ? { voice_id: brand.cfg.voice.voice_id, ...(brand.cfg.voice.provider ? { provider: brand.cfg.voice.provider } : {}) } : undefined);
   const root0 = path.join(video.dir, 'build', 'voice');
   creditCheck(chunks.filter((text, i) => !chunkDone(path.join(root0, String(i + 1).padStart(3, '0')), text)), root0, flags);

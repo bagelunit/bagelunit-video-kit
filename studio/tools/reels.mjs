@@ -10,6 +10,7 @@
 // cleared facts out). From there the reel goes through the Reel Kit's own steps: a new first line (its hook), its own
 // voice at reel pace, gates A, B and C. Nothing is voiced, rendered or posted here.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { findBrand, numbersIn } from './checks.mjs';
@@ -73,8 +74,12 @@ function factLines(videoDir, scenes) {
 }
 
 export function planReels(video, ranges) {
-  const brand = findBrand(video.dir);
-  if (!brand) throw new Error('reels are made in a Reel Kit brand folder, and this video is not in one (make it in <brand>/videos/ to turn it into reels)');
+  // the reels go to the Reel Kit brand folder the channel links to (brand.json "reels_folder"), or to the brand folder the
+  // video sits in when that is a Reel Kit brand folder itself
+  const home = findBrand(video.dir);
+  const linked = home?.cfg.reels_folder ? path.resolve(String(home.cfg.reels_folder).replace(/^~(?=$|[\\/])/, os.homedir())) : null;
+  const brand = linked ? findBrand(linked) : home && fs.existsSync(path.join(home.dir, 'reels')) ? home : null;
+  if (!brand || (linked && brand.dir !== linked)) throw new Error(linked ? `reels_folder in brand/brand.json points at ${linked}, which is not a Reel Kit brand folder (no brand/brand.json there)` : 'reels are made in a BagelUnit Reel Kit brand folder: set "reels_folder" in this channel\'s brand/brand.json to yours (/channel-setup asks for it)');
   const clock = sceneClock(video.dir);
   const published = readJSON(path.join(video.dir, 'out', 'youtube-published.json'), null);
   // the next free number: video-reel-1, -2 ... are never reused, so a second run never lands on an earlier reel
@@ -89,7 +94,7 @@ export function planReels(video, ranges) {
       seconds: picked.reduce((n, c) => n + c.dur, 0), estimate: picked.some((c) => c.estimate),
       scenes, script: scenes.map((s) => s.narration).join('\n\n') + '\n',
       facts: factLines(video.dir, scenes),
-      source: { from_video: path.relative(brand.dir, video.dir).split(path.sep).join('/'), scenes: [a, b], title: video.cfg.title || video.name, url: published?.url || null },
+      source: { from_video: (video.dir.startsWith(brand.dir + path.sep) ? path.relative(brand.dir, video.dir) : video.dir).split(path.sep).join('/'), scenes: [a, b], title: video.cfg.title || video.name, url: published?.url || null },
     };
   });
 }

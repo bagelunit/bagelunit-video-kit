@@ -1,0 +1,7 @@
+# renders, audio and build files stay out of this folder's history
+videos/*/build/
+videos/*/out/*.mp4
+videos/*/out/thumbnails/
+videos/*/audio/
+.cache/
+.DS_Store

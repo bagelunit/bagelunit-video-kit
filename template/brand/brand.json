@@ -1,0 +1,33 @@
+{
+  "name": "",
+  "slug": "",
+  "niche": {
+    "topic": "",
+    "audience": "",
+    "search_terms": []
+  },
+  "youtube": {
+    "channel_name": "",
+    "handle": "",
+    "privacy": "private"
+  },
+  "colors": {
+    "accent": ""
+  },
+  "voice": {
+    "provider": "elevenlabs",
+    "voice_id": "",
+    "voice_name": "",
+    "speed": 1,
+    "never_say": [],
+    "pronunciation": {}
+  },
+  "style": {
+    "usual": [],
+    "never": []
+  },
+  "cta": {
+    "line": ""
+  },
+  "reels_folder": ""
+}

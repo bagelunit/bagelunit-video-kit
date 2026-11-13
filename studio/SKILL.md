@@ -22,16 +22,18 @@ approvals.md   the record of each fact check and approval (the kit writes it; ea
 out/           video.mp4, chapters.txt, thumbnail.jpg, youtube.txt (title on line 1, description after)
 ```
 
-## In a brand folder
+## In a channel folder
 
-When Claude Code runs in a BagelUnit Reel Kit brand folder (it has `brand/brand.json`), videos live in `videos/<name>` next to `reels/`: `video new <name> --style <id>` puts them there. The video then belongs to the brand:
+A channel folder (made by `/video-setup`; it has `brand/brand.json` and a `videos/` folder) is one YouTube channel. Videos live in `videos/<name>`: `video new <name> --style <id>` puts them there. Each video then belongs to the channel:
 
-- **Read first:** `brand/brand.json` (name, `voice`, `cta`, `niche`), `brand/voice.md` (how the brand talks, words it never uses) and `brand/facts.md` (cleared facts and the "Never say" list).
-- **Voice:** the brand's ElevenLabs voice is used unless video.json sets its own `voice`. Spell tricky names in script.txt the way `voice.pronunciation` says (on screen they keep their real spelling).
-- **Facts:** a cleared fact in `brand/facts.md` counts as a source in the fact check; anything on the brand's never-say lists (`voice.never_say`, and "Never say" in facts.md) fails it.
-- **Call to action:** the last scene and the description end on the brand's call to action (`cta`).
+- **Read first:** `brand/brand.json` (name, `niche`, `youtube`, `voice`, `style`, `cta`), `brand/voice.md` (how the channel talks) and `brand/facts.md` (cleared facts and the "Never say" list). Pick the style from `style.usual` when it fits; never one in `style.never`. A `CLAUDE.local.md` there holds the owner's own rules for that channel.
+- **Voice:** the channel's ElevenLabs voice and `voice.speed` are used unless video.json sets its own. Spell tricky names in script.txt the way `voice.pronunciation` says (on screen they keep their real spelling).
+- **Facts:** a cleared fact in `brand/facts.md` counts as a source in the fact check; anything on the never-say lists (`voice.never_say`, and "Never say" in facts.md) fails it.
+- **Call to action:** the last scene and the description end on `cta.line`.
+- **YouTube:** the sign-in is the channel's own (saved under `slug`), and uploads use `youtube.privacy` (private or unlisted) unless a video says otherwise.
+- **Reels:** `reels_folder` points at the channel's Reel Kit brand folder, where `video reels` makes reels.
 
-Outside a brand folder the video stands alone and none of this applies.
+A Reel Kit brand folder works the same way (videos go in its `videos/`, next to `reels/`). Outside any of these the video stands alone and none of this applies.
 
 ## The order of work
 

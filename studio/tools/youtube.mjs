@@ -22,7 +22,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { approvalCurrent } from './checks.mjs';
+import { approvalCurrent, findBrand } from './checks.mjs';
 
 export const CONFIG_DIR = process.env.BAGELUNIT_VIDEO_CONFIG || path.join(os.homedir(), '.config', 'bagelunit-video');
 const REEL_CONFIG = path.join(os.homedir(), '.config', 'bagelunit-reels');
@@ -80,7 +80,7 @@ export function readCredentials(slug, { dir = CONFIG_DIR, reelDir = REEL_CONFIG 
   }
   if (!cfg) {
     writePrivate(file, { client_id: 'PASTE-CLIENT-ID-HERE', client_secret: 'PASTE-CLIENT-SECRET-HERE' });
-    throw new Plain(`Made ${file} with PASTE-... in place of the client_id and client_secret (a Google Cloud "Desktop app" OAuth client for the YouTube Data API v3; the Reel Kit's docs/connect.md step 6B). Paste them in that file, then run this again.`);
+    throw new Plain(`Made ${file} with PASTE-... in place of the client_id and client_secret (a Google Cloud "Desktop app" OAuth client for the YouTube Data API v3; the Video Kit's SETUP.md section 5). Paste them in that file, then run this again.`);
   }
   const inner = cfg.installed || cfg.web;
   if (inner) cfg = { ...cfg, client_id: inner.client_id, client_secret: inner.client_secret };
@@ -190,8 +190,11 @@ async function setThumbnail(token, id, file, fetchImpl) {
 
 export async function upload(dir, { privacy, yes = false, again = false, thumb = true, slug, fetchImpl = fetch, log = console.log, credDir = CONFIG_DIR, reelDir = REEL_CONFIG } = {}) {
   const cfgV = readJSON(path.join(dir, 'video.json'), null) || {};
-  slug = slug || cfgV.channel || 'default';
-  privacy = privacy || cfgV.privacy || 'private';
+  // the channel folder this video sits in names the sign-in (one per channel) and may set a calmer default privacy
+  const brand = findBrand(dir);
+  slug = slug || cfgV.channel || brand?.cfg.slug || 'default';
+  const brandPrivacy = ['private', 'unlisted'].includes(brand?.cfg.youtube?.privacy) ? brand.cfg.youtube.privacy : null;
+  privacy = privacy || cfgV.privacy || brandPrivacy || 'private';
   const mp4 = path.join(dir, 'out', 'video.mp4'), jpg = path.join(dir, 'out', 'thumbnail.jpg');
   const txt = path.join(dir, 'out', 'youtube.txt'), chaptersFile = path.join(dir, 'out', 'chapters.txt');
   const text = fs.existsSync(txt) ? fs.readFileSync(txt, 'utf8') : cfgV.title ? `${cfgV.title}\n` : '';
@@ -244,7 +247,11 @@ export async function cli(argv) {
   const flags = {}, loose = [];
   for (let i = 0; i < argv.length; i++) { const a = argv[i]; if (a.startsWith('--')) { const n = argv[i + 1]; if (n === undefined || n.startsWith('--')) flags[a.slice(2)] = true; else { flags[a.slice(2)] = n; i++; } } else loose.push(a); }
   try {
-    if (loose[0] === 'login') return await login({ slug: typeof flags.slug === 'string' ? flags.slug : 'default' });
+    if (loose[0] === 'login') {
+      const b = findBrand(process.cwd()), slug = typeof flags.slug === 'string' ? flags.slug : b?.cfg.slug || 'default';
+      console.log(`signing in for the channel "${slug}"${b ? ` (${b.cfg.name || path.basename(b.dir)})` : ''}`);
+      return await login({ slug });
+    }
     if (loose[0] === 'upload') {
       if (!loose[1]) throw new Plain('give the video folder: node video.mjs youtube upload <folder>');
       return await upload(path.resolve(loose[1]), { privacy: typeof flags.privacy === 'string' ? flags.privacy : undefined, yes: Boolean(flags.yes), again: Boolean(flags.again), thumb: !flags['no-thumbnail'], slug: typeof flags.slug === 'string' ? flags.slug : undefined });

@@ -15,7 +15,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+      - name: ffmpeg (the tests make and measure small videos)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -y -q ffmpeg; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then brew install ffmpeg; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg -y --no-progress; fi
+          ffmpeg -version | head -1
       - name: Repo scan
         run: node setup/scan-repo.mjs
       - name: Tests (no key, no network, no browser)
+        shell: bash
         run: node setup/test-video.mjs
