@@ -1,0 +1,156 @@
+#!/usr/bin/env node
+// Tests for the Video Kit that need no key, no network and no browser: script chunking, chapters, YouTube text and
+// limits, the upload flow against a fake YouTube (dry run, session saved first, resume, never twice, stand-in refused),
+// and that the synced styles are wide and match their fingerprints. Run: node setup/test-video.mjs
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { chunkScript, chapterLines, stamp } from '../studio/tools/video.mjs';
+import * as yt from '../studio/tools/youtube.mjs';
+import * as scenes from '../studio/tools/scenes.mjs';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+let n = 0;
+const test = async (name, fn) => { try { await fn(); n++; console.log(`ok   ${name}`); } catch (e) { console.error(`FAIL ${name}\n  ${e.stack || e}`); process.exitCode = 1; } };
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'video-kit-test-'));
+
+await test('chunkScript cuts at paragraphs, never over the limit, keeps every word', () => {
+  const text = Array.from({ length: 30 }, (_, i) => `Paragraph ${i} says something quite ordinary about the number ${i}. It has two sentences.`).join('\n\n');
+  const c = chunkScript(text, 400);
+  assert.ok(c.length > 1 && c.every((x) => x.length <= 400));
+  assert.equal(c.join(' ').replace(/\s+/g, ' ').split(' ').length, text.replace(/\s+/g, ' ').split(' ').length);
+  const long = Array.from({ length: 40 }, (_, i) => `Sentence number ${i} is here.`).join(' ');
+  assert.ok(chunkScript(long, 200).every((x) => x.length <= 200));
+});
+
+await test('stamp and chapters: first at 0:00, at least three, ten seconds apart', () => {
+  assert.equal(stamp(0), '0:00'); assert.equal(stamp(75), '1:15'); assert.equal(stamp(3725), '1:02:05');
+  const plan = [{ chapter: 'Intro' }, {}, { chapter: 'Middle' }, { chapter: 'End' }], times = [0, 12, 30, 45].map((t0) => ({ t0 }));
+  const r = chapterLines(plan, times);
+  assert.deepEqual(r.lines, ['0:00 Intro', '0:30 Middle', '0:45 End']);
+  assert.equal(r.notes.length, 0);
+  assert.ok(chapterLines(plan, [0, 12, 5, 45].map((t0) => ({ t0 }))).notes.some((x) => /10 s/.test(x)));
+});
+
+await test('chapterLines moves the first chapter to 0:00 and warns about fewer than three', () => {
+  const r = chapterLines([{}, { chapter: 'A' }], [{ t0: 0 }, { t0: 20 }]);
+  assert.equal(r.lines[0], '0:00 A');
+  assert.ok(r.notes.some((x) => /at least 3/.test(x)));
+});
+
+await test('parts and problems: title, limits, chapters appended, no #Shorts', () => {
+  const p = yt.parts('A title\n\nThe description.', '0:00 One\n0:30 Two\n1:00 Three\n');
+  assert.equal(p.title, 'A title'); assert.ok(p.description.endsWith('1:00 Three')); assert.ok(!/Shorts/i.test(p.description));
+  assert.equal(yt.parts('T\n\n0:00 Mine\n', '0:00 Other').description, '0:00 Mine');
+  const ok = { video: true, thumbnail: null, standIn: false, privacy: 'private' };
+  assert.deepEqual(yt.problems(p, ok), []);
+  assert.ok(yt.problems({ title: 'x'.repeat(101), description: '' }, ok).some((x) => /101/.test(x)));
+  assert.ok(yt.problems({ title: 'a<b', description: '' }, ok).length);
+  assert.ok(yt.problems(p, { ...ok, standIn: true }).some((x) => /stand-in/.test(x)));
+  assert.ok(yt.problems(p, { ...ok, privacy: 'everyone' }).length);
+});
+
+const fakeFolder = ({ standIn = false } = {}) => {
+  const d = tmp();
+  fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.mkdirSync(path.join(d, 'audio'), { recursive: true }); fs.mkdirSync(path.join(d, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: 'T' }));
+  fs.writeFileSync(path.join(d, 'out', 'video.mp4'), Buffer.alloc(5000, 7));
+  fs.writeFileSync(path.join(d, 'out', 'youtube.txt'), 'How volcanoes work\n\nA short description.');
+  fs.writeFileSync(path.join(d, 'out', 'chapters.txt'), '0:00 One\n0:30 Two\n1:00 Three\n');
+  fs.writeFileSync(path.join(d, 'audio', 'vo.mp3'), 'voice');
+  if (standIn) fs.writeFileSync(path.join(d, 'build', 'voice-stand-in.json'), JSON.stringify({ sha: createHash('sha256').update('voice').digest('hex') }));
+  return d;
+};
+const cred = () => { const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'id', client_secret: 'secret-xyz', refresh_token: 'rt' })); return c; };
+function fakeYouTube({ cut = false } = {}) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    const u = String(url); calls.push({ url: u, method: init.method, body: init.body });
+    if (u.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'at' }), { status: 200 });
+    if (u.includes('uploadType=resumable')) return new Response('{}', { status: 200, headers: { location: 'https://upload.example/session1' } });
+    if (u.startsWith('https://upload.example/')) {
+      if (init.headers?.['Content-Range']?.startsWith('bytes */')) return cut ? new Response('', { status: 308, headers: { range: 'bytes=0-1999' } }) : new Response(JSON.stringify({ id: 'vid1' }), { status: 200 });
+      if (init.body && typeof init.body.on === 'function') { for await (const _ of init.body) {} }
+      return new Response(JSON.stringify({ id: 'vid1' }), { status: 200 });
+    }
+    if (u.includes('thumbnails/set')) return new Response('{}', { status: 200 });
+    return new Response('{}', { status: 404 });
+  };
+  return { fetchImpl, calls };
+}
+
+await test('upload is a dry run without --yes and sends nothing', async () => {
+  const d = fakeFolder(), f = fakeYouTube();
+  const r = await yt.upload(d, { fetchImpl: f.fetchImpl, credDir: cred(), log: () => {} });
+  assert.equal(r.dryRun, true); assert.equal(f.calls.length, 0);
+  assert.equal(r.meta.status.privacyStatus, 'private');
+});
+
+await test('upload refuses a stand-in voice and a missing video', async () => {
+  await assert.rejects(yt.upload(fakeFolder({ standIn: true }), { yes: true, fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /stand-in/);
+  const d = fakeFolder(); fs.rmSync(path.join(d, 'out', 'video.mp4'));
+  await assert.rejects(yt.upload(d, { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /video.mp4 is missing/);
+});
+
+await test('upload --yes: session first, bytes, published record, then a second upload is refused', async () => {
+  const d = fakeFolder(), f = fakeYouTube(), c = cred();
+  const r = await yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: c, log: () => {} });
+  assert.equal(r.id, 'vid1');
+  const order = f.calls.map((x) => (x.url.includes('resumable') ? 'start' : x.url.startsWith('https://upload.example') ? 'put' : x.url.includes('thumbnails') ? 'thumb' : 'token'));
+  assert.ok(order.indexOf('start') < order.indexOf('put'));
+  assert.ok(fs.existsSync(path.join(d, 'out', 'youtube-published.json')) && !fs.existsSync(path.join(d, 'build', 'youtube-upload.json')));
+  await assert.rejects(yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: c, log: () => {} }), /already uploaded/);
+});
+
+await test('upload resumes from a saved session: asks YouTube how far it got, sends only the rest', async () => {
+  const d = fakeFolder(), f = fakeYouTube({ cut: true });
+  fs.writeFileSync(path.join(d, 'build', 'youtube-upload.json'), JSON.stringify({ session: 'https://upload.example/session1', size: 5000 }));
+  await yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: cred(), log: () => {} });
+  assert.ok(!f.calls.some((x) => x.url.includes('resumable')), 'no new session');
+  assert.ok(f.calls.some((x) => x.method === 'PUT'));
+});
+
+await test('missing credentials make a PASTE file and say so; secrets never appear in messages', async () => {
+  const c = tmp(), r = tmp();
+  assert.throws(() => yt.readCredentials('default', { dir: c, reelDir: r }), /PASTE-/);
+  assert.ok(fs.existsSync(path.join(c, 'youtube-default.json')));
+  assert.throws(() => yt.readCredentials('default', { dir: c, reelDir: r }), (e) => !/secret-xyz/.test(e.message) && /still needs/.test(e.message));
+  fs.writeFileSync(path.join(r, 'youtube-x.json'), JSON.stringify({ client_id: 'cid', client_secret: 'cs' }));
+  assert.equal(yt.readCredentials('x', { dir: c, reelDir: r }).cfg.client_id, 'cid');   // borrowed from the Reel Kit file
+});
+
+await test('styles are wide, registered, and every file matches its fingerprint', () => {
+  const reg = scenes.registry();
+  assert.equal(reg.format, 'wide'); assert.deepEqual(reg.size, [1920, 1080]);
+  assert.equal(scenes.sceneStyleIds().length, 19);
+  for (const s of reg.styles) for (const [file, fp] of Object.entries(s.files)) {
+    const h = createHash('sha256').update(fs.readFileSync(path.join(REPO, 'studio', 'styles', s.id, file))).digest('hex').slice(0, 16);
+    assert.equal(h, fp, `${s.id}/${file} was edited by hand: sync from the styles repo instead`);
+  }
+});
+
+await test('video voice joins chunks with a stand-in voice.py: one audio file, word times shifted, natural pace', () => {
+  const eng = tmp(); fs.mkdirSync(path.join(eng, 'tools'));
+  fs.writeFileSync(path.join(eng, 'tools', 'voice.py'), `import sys, json, subprocess, pathlib
+d = pathlib.Path(sys.argv[1]); open(d / 'args.txt', 'w').write(' '.join(sys.argv[2:])); words = (d / 'script.txt').read_text().split()
+(d / 'build').mkdir(exist_ok=True); (d / 'audio').mkdir(exist_ok=True)
+json.dump([{'w': w, 's': i * 0.3, 'e': i * 0.3 + 0.25} for i, w in enumerate(words)], open(d / 'build' / 'words.json', 'w'))
+subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=200:duration=%s' % (len(words) * 0.3), str(d / 'audio' / 'vo.mp3')], check=True)
+`);
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({ style: 'clean-shapes' }));
+  fs.writeFileSync(path.join(dir, 'script.txt'), Array.from({ length: 12 }, (_, i) => `Paragraph ${i} has some words in it, nothing more.`).join('\n\n'));
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', dir], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: eng, VIDEO_CHUNK: '120' } });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.ok(fs.existsSync(path.join(dir, 'audio', 'vo.mp3')));
+  const w = JSON.parse(fs.readFileSync(path.join(dir, 'build', 'words.json'), 'utf8'));
+  assert.equal(w.length, 12 * 9);
+  assert.ok(w.every((x, i) => i === 0 || x.s >= w[i - 1].s), 'word times only go forward');
+  assert.match(fs.readFileSync(path.join(dir, 'build', 'voice', '001', 'args.txt'), 'utf8'), /--speed 1\b/, 'a video is voiced at natural pace, not the reel speed-up');
+});
+
+console.log(n ? `\n${n} test(s) passed` : '');

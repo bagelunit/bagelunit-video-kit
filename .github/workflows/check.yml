@@ -1,0 +1,21 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Repo scan
+        run: node setup/scan-repo.mjs
+      - name: Tests (no key, no network, no browser)
+        run: node setup/test-video.mjs
