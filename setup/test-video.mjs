@@ -142,7 +142,7 @@ json.dump([{'w': w, 's': i * 0.3, 'e': i * 0.3 + 0.25} for i, w in enumerate(wor
 subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=200:duration=%s' % (len(words) * 0.3), str(d / 'audio' / 'vo.mp3')], check=True)
 `);
   const dir = tmp();
-  fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({ style: 'clean-shapes' }));
+  fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({ style: 'clean-shapes', no_research: 'a test script' }));
   fs.writeFileSync(path.join(dir, 'script.txt'), Array.from({ length: 12 }, (_, i) => `Paragraph ${i} has some words in it, nothing more.`).join('\n\n'));
   const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', dir], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: eng, VIDEO_CHUNK: '120' } });
   assert.equal(r.status, 0, r.stderr + r.stdout);
@@ -151,6 +151,26 @@ subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lav
   assert.equal(w.length, 12 * 9);
   assert.ok(w.every((x, i) => i === 0 || x.s >= w[i - 1].s), 'word times only go forward');
   assert.match(fs.readFileSync(path.join(dir, 'build', 'voice', '001', 'args.txt'), 'utf8'), /--speed 1\b/, 'a video is voiced at natural pace, not the reel speed-up');
+});
+
+await test('research comes before the voice: empty page, too few sources, a reason to skip, and two sources', async () => {
+  const { researchState, RESEARCH_PAGE } = await import('../studio/tools/video.mjs');
+  const d = tmp();
+  assert.equal(researchState(d).ok, false, 'no research.md');
+  fs.writeFileSync(path.join(d, 'research.md'), RESEARCH_PAGE);
+  assert.match(researchState(d).why, /empty page/);
+  fs.writeFileSync(path.join(d, 'research.md'), '# Research\n- a fact [a](https://example.org/a)\n');
+  assert.match(researchState(d).why, /1 source/);
+  fs.writeFileSync(path.join(d, 'research.md'), '# Research\n- a fact [a](https://example.org/a)\n- another [b](https://example.org/b)\n');
+  assert.equal(researchState(d).ok, true);
+  assert.equal(researchState(tmp(), { no_research: 'a bedtime story' }).ok, true);
+  const v = tmp();
+  fs.writeFileSync(path.join(v, 'video.json'), JSON.stringify({ style: 'clean-shapes' }));
+  fs.writeFileSync(path.join(v, 'script.txt'), 'Words to say.');
+  fs.writeFileSync(path.join(v, 'research.md'), RESEARCH_PAGE);
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', v], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: tmp() } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr + r.stdout, /not voicing yet/);
 });
 
 console.log(n ? `\n${n} test(s) passed` : '');

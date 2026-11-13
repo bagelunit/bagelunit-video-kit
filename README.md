@@ -12,7 +12,7 @@ A real voice needs the ElevenLabs key file from the Reel Kit setup. Without it, 
 
 ## Make a video
 
-Open Claude Code in the folder where the video should live and type `/bagelunit-video`. It follows `studio/SKILL.md`: pick a style, outline, script, scenes, voice, check, render, thumbnail, YouTube text, upload. The upload is a dry run until you add `--yes`, and it is private by default.
+Open Claude Code in the folder where the video should live and type `/bagelunit-video`. It follows `studio/SKILL.md`: pick a style, research the topic (every fact with its source, in `research.md`), then a report and a map of the video from start to end for you to approve, with a suggestion to split it into parts if it runs long. Only after your go-ahead: script, scenes, voice, check, render, thumbnail, YouTube text, upload. There is no length limit. The upload is a dry run until you add `--yes`, and it is private by default.
 
 ## Parts
 

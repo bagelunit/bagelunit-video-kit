@@ -51,6 +51,37 @@ const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: 'utf8', ..
 const mediaLength = (f) => { const r = sh('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f]); const v = parseFloat(r.stdout); return Number.isFinite(v) ? v : null; };
 
 /* ── new ────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
+/* ── research ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+// research.md holds what the video may claim and where each fact comes from. `video new` writes the empty page below; the
+// voice (the first step that costs credits) refuses until the page has its marker removed and at least two sources, or until
+// video.json says why no research is needed ("no_research": "a bedtime story, nothing to check").
+const RESEARCH_MARK = '<!-- not researched yet -->';
+export const RESEARCH_PAGE = `# Research
+${RESEARCH_MARK}
+
+## The question
+What the video has to answer, in one sentence.
+
+## What was found
+- One fact per line, said plainly, with its source: [publisher, title](https://...)
+
+## Not sure or disputed
+- Claims the sources disagree on, or that only one weak source makes. These stay out of the video or are said as uncertain.
+
+## Sources
+1. [Title](https://...) by who, when published, when read
+`;
+export function researchState(dir, cfg = {}) {
+  if (cfg.no_research) return { ok: true, why: `no research needed: ${cfg.no_research}` };
+  const f = path.join(dir, 'research.md');
+  if (!fs.existsSync(f)) return { ok: false, why: 'research.md is missing' };
+  const text = fs.readFileSync(f, 'utf8');
+  if (text.includes(RESEARCH_MARK)) return { ok: false, why: 'research.md is still the empty page (remove the "not researched yet" line once it is done)' };
+  const links = new Set(text.match(/https?:\/\/[^\s)>\]]+/g) || []);
+  if (links.size < 2) return { ok: false, why: `research.md lists ${links.size} source link(s); at least 2 are needed` };
+  return { ok: true, why: `research.md: ${links.size} sources` };
+}
+
 function newVideo(folder, flags) {
   const style = flags.style;
   if (!style || style === true) die(`say the style: --style <id>. The styles: ${scenes.sceneStyleIds().join(', ')}`);
@@ -67,9 +98,11 @@ function newVideo(folder, flags) {
   if (flags.title && flags.title !== true) {
     const f = path.join(dir, 'video.json'), c = readJSON(f, {}); c.title = String(flags.title); fs.writeFileSync(f, JSON.stringify(c, null, 2) + '\n');
   }
+  const rf = path.join(dir, 'research.md');
+  if (fs.existsSync(rf)) kept.push('research.md'); else fs.writeFileSync(rf, RESEARCH_PAGE);
   for (const d of ['audio', 'build', 'out']) fs.mkdirSync(path.join(dir, d), { recursive: true });
   console.log(`new ${style} video: ${dir}${kept.length ? `  (kept: ${kept.join(', ')})` : ''}`);
-  console.log('next: write outline.md and script.txt, plan scenes.json (templates: node video.mjs styles ' + style + '), then  voice  and  render  (SKILL.md)');
+  console.log('next: research (research.md), report and map the video for the person and wait for their go-ahead, then write outline.md and script.txt, plan scenes.json (templates: node video.mjs styles ' + style + '), then  voice  and  render  (SKILL.md)');
 }
 
 /* ── voice, in chunks ───────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -97,6 +130,8 @@ export function chunkScript(text, max = CHUNK) {
 function voice(video, flags) {
   const script = path.join(video.dir, 'script.txt');
   if (!fs.existsSync(script)) die('no script.txt to voice');
+  const research = researchState(video.dir, video.cfg);
+  if (!research.ok) die(`not voicing yet: ${research.why}. Research comes before the voice (SKILL.md steps 3 and 4); for a video with nothing to check, put "no_research": "<why>" in video.json.`);
   const py = path.join(REEL_ENGINE, 'tools', 'voice.py');
   if (!fs.existsSync(py)) die(`the Reel Kit engine is not installed (${py} is missing). Run bash setup/install.sh in the Reel Kit first.`);
   if (scenes.standInIsActive?.(video.dir)) fs.rmSync(path.join(video.dir, 'audio', 'vo.mp3'), { force: true });
