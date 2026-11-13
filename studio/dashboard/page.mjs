@@ -343,10 +343,11 @@ footer{margin:64px 0 0;padding:24px 0 48px;border-top:1px solid var(--line);font
   .find input{width:130px}
   .meta{text-align:left}
 }
+.meta a.rev{color:inherit;text-decoration:underline;text-underline-offset:3px}
 </style></head>
 <body class="nojs"><div class="bg" aria-hidden="true"></div>
 <header class="wrap top" data-reveal><div class="row"><div>${label('film', 'Video dashboard')}<h1>${esc(M.name)}<span class="dot">.</span></h1></div>
-<div class="meta">Updated <b>${esc(updated)}</b><br>${M.videos.length} video${M.videos.length === 1 ? '' : 's'}${M.brand ? ` · brand <b>${esc(M.brand.name)}</b>` : ''}</div></div>
+<div class="meta">Updated <b>${esc(updated)}</b><br>${M.videos.length} video${M.videos.length === 1 ? '' : 's'}${M.brand ? ` · brand <b>${esc(M.brand.name)}</b>` : ''}${M.review ? `<br><a class="rev" href="${esc(encodeURI(M.review.href))}" title="${esc(M.review.headline)}">Channel review ${esc(M.review.date)}</a>` : ''}</div></div>
 ${strip(M)}</header>
 
 <section class="wrap split" aria-label="What needs you and what is next">

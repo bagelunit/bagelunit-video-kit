@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // video.mjs · the BagelUnit Video Kit command line. Long and standard videos at 1920x1080, made scene by scene in one of
-// the 19 synced scene styles (studio/styles). Voice, the headless browser and the fonts come from the installed Reel Kit
+// the 20 synced scene styles (studio/styles). Voice, the headless browser and the fonts come from the installed Reel Kit
 // engine (~/.claude/skills/bagelunit-reels), the same way the Carousel Kit borrows them.
 //
 //   node video.mjs styles [<style>]                        the styles and, for one, its templates
@@ -10,17 +10,20 @@
 //   node video.mjs voice <folder> [--voice id] [--speed 1] [--force]  voice script.txt in chunks (Reel Kit voice.py), one audio file
 //   node video.mjs facts <folder> [--scope script|final]   fact check: every number said or shown is in research.md
 //   node video.mjs facts <folder> record --result PASS|FAIL [--scope s] [--note t]   the verdict after re-reading sources
-//   node video.mjs approve <folder> map|final [--note t]   record the person's go-ahead (map: before the voice; final: before upload)
+//   node video.mjs approve <folder> map|final [--watched] [--note t]   the person's go-ahead (map: before the voice; final, after
+//                                                          they watched the whole final cut: --watched, before upload)
 //   node video.mjs check <folder> [--only n]               every scene: errors, safe area, seeking, stills to look at
 //   node video.mjs render <folder> [--scene n] [--force]   render changed scenes, join them, mix the voice: out/video.mp4
 //   node video.mjs chapters <folder>                       out/chapters.txt (YouTube chapters) from the scenes' "chapter"
-//   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--name b | --use b]  out/thumbnail.jpg (1280x720)
+//   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--plain] [--name b | --use b]  out/thumbnail.jpg (1280x720)
+//   node video.mjs captions <folder>                       out/captions.<lang>.srt from the word clock (the upload adds it)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
 //   node video.mjs reels <folder> [--pick 3-5,12-14] [--apply]  turn stretches of the video into Reel Kit reels (dry run first)
+//   node video.mjs review <channel folder> <export.csv ...>   a channel review from YouTube Studio CSV exports: reviews/<date>.md
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
-//   node video.mjs youtube <login|upload> ...              youtube.mjs
+//   node video.mjs youtube <login|upload|captions> ...     youtube.mjs
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -161,26 +164,171 @@ function voice(video, flags) {
     if (r.status !== 0) die(`voice.py stopped on chunk ${i + 1}. Chunks already made are kept and not paid for again; fix the cause and run voice again.`);
     parts.push(d);
   });
-  // join: audio with a breath between chunks, word times shifted by each chunk's start
-  const words = [], inputs = [], gaps = [];
+  let plan = [];
+  try { plan = scenes.planOf(video.dir, video.cfg.style).scenes; } catch (e) { if (fs.existsSync(path.join(video.dir, 'scenes.json'))) console.log(`note: scenes.json could not be read (${e.message}), so no scene "pause" went into the voice`); }
+  try { joinVoice(video.dir, parts, { plan }); } catch (e) { die(e.message); }
+  fs.rmSync(path.join(video.dir, 'build', 'voice-stand-in.json'), { force: true });
+}
+
+// The chunks joined into audio/vo.mp3 with a breath between them, their word times shifted by each chunk's start
+// (build/words.json), and the silence of every scene with a "pause" spliced in (build/pauses.json, scenes.mjs placePauses).
+// Afterwards the word clock is checked against the audio, chunk by chunk and in all: a clock that runs past it is a warning.
+export function joinVoice(dir, parts, { plan = [], log = console.log } = {}) {
+  const root = path.join(dir, 'build', 'voice');
+  fs.mkdirSync(root, { recursive: true });
+  const words = [], inputs = [], warnings = [];
   let t = 0;
   parts.forEach((d, i) => {
     const mp3 = path.join(d, 'audio', 'vo.mp3'), len = mediaLength(mp3);
-    if (!len) die(`chunk ${i + 1} has no audio (${mp3})`);
-    for (const w of readJSON(path.join(d, 'build', 'words.json'), [])) words.push({ w: w.w, s: +(w.s + t).toFixed(3), e: +(w.e + t).toFixed(3) });
+    if (!len) throw new Error(`chunk ${i + 1} has no audio (${mp3})`);
+    const own = readJSON(path.join(d, 'build', 'words.json'), []) || [];
+    const late = scenes.clockCheck(own, len, `chunk ${i + 1} (${path.relative(dir, d)})`);
+    if (late) warnings.push(`${late}. Listen to the end of that chunk; to voice it again, delete ${path.relative(dir, d)} and run video voice (only that chunk is paid for again).`);
+    for (const w of own) words.push({ w: w.w, s: +(w.s + t).toFixed(3), e: +(w.e + t).toFixed(3) });
     inputs.push(mp3); t += len + (i < parts.length - 1 ? BREATH : 0);
   });
-  const list = path.join(root, 'join.txt');
-  const sil = path.join(root, 'breath.wav');
-  sh('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', String(BREATH), sil]);
-  fs.writeFileSync(list, inputs.flatMap((f, i) => (i < inputs.length - 1 ? [f, sil] : [f])).map((f) => `file '${f.split(path.sep).join('/').replace(/'/g, "'\\''")}'`).join('\n') + '\n');
-  fs.mkdirSync(path.join(video.dir, 'audio'), { recursive: true });
-  const vo = path.join(video.dir, 'audio', 'vo.mp3');
-  const j = sh('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100', '-ac', '1', '-b:a', '192k', vo]);
-  if (j.status !== 0) die(`joining the voice chunks failed: ${(j.stderr || '').slice(-300)}`);
-  scenes.writeWords(video.dir, words);
-  fs.rmSync(path.join(video.dir, 'build', 'voice-stand-in.json'), { force: true });
-  console.log(`voice: audio/vo.mp3 ${mediaLength(vo)?.toFixed(1)} s, ${words.length} words → build/words.json`);
+  const placed = scenes.placePauses(plan, words, t);
+  const { words: clock, splices, clamped } = scenes.applyPauses(words, placed);
+  for (const f of ['join.txt', 'breath.wav']) fs.rmSync(path.join(root, f), { force: true });   // the old join's files
+  fs.mkdirSync(path.join(dir, 'audio'), { recursive: true });
+  const vo = path.join(dir, 'audio', 'vo.mp3');
+  const level = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100';
+  const j = sh('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...inputs.flatMap((f) => ['-i', f]), '-filter_complex', joinGraph(inputs.length, BREATH, level, placed), '-map', '[a]', '-ac', '1', '-b:a', '192k', vo]);
+  if (j.status !== 0) throw new Error(`joining the voice chunks failed: ${(j.stderr || '').slice(-300)}`);
+  scenes.writeWords(dir, clock);
+  scenes.writePauses(dir, splices);
+  const length = mediaLength(vo);
+  const late = scenes.clockCheck(clock, length, 'the joined voice');
+  if (late) warnings.push(late);
+  log(`voice: audio/vo.mp3 ${length?.toFixed(1)} s, ${clock.length} words → build/words.json`);
+  if (splices.length) log(`pauses: ${splices.map((p) => `${p.seconds.toFixed(2)} s for scene ${p.n} at ${p.at.toFixed(2)} s`).join(', ')} → build/pauses.json${clamped ? ` (${clamped} word(s) that ran over a splice were cut at it)` : ''}`);
+  for (const w of warnings) log(`WARNING: ${w}`);
+  return { words: clock, length, splices, clamped, warnings };
+}
+
+// ffmpeg: the chunks joined with a breath of silence between them (made in the graph: ffmpeg's concat demuxer read a .wav
+// breath between .mp3 chunks as mp3 and dropped it, so the voice came out 0.45 s short at every join while the word clock
+// counted the breath), levelled, then cut at each splice with that many seconds of silence put in, in order
+const FMT = 'aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=mono';
+const silence = (sec, label) => `anullsrc=r=44100:cl=mono,atrim=duration=${sec.toFixed(6)},${FMT}${label}`;
+export function joinGraph(n, breath, level, placed = []) {
+  const parts = [], labels = [];
+  for (let i = 0; i < n; i++) {
+    parts.push(`[${i}:a]aresample=44100,${FMT}[c${i}]`); labels.push(`[c${i}]`);
+    if (i < n - 1 && breath > 0) { parts.push(silence(breath, `[b${i}]`)); labels.push(`[b${i}]`); }
+  }
+  parts.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[joined]`);
+  if (!placed.length) { parts.push(`[joined]${level},${FMT}[a]`); return parts.join(';'); }
+  return `${parts.join(';')};${spliceGraph(level, placed, '[joined]')}`;
+}
+export function spliceGraph(level, placed, input = '[0:a]') {
+  const order = [...placed].sort((x, y) => x.at - y.at || x.n - y.n);
+  const fmt = FMT;
+  const pieces = [];
+  let cursor = 0;
+  for (const p of order) {
+    if (p.at > cursor + 1e-6) pieces.push({ from: cursor, to: p.at });
+    pieces.push({ silence: p.seconds });
+    cursor = Math.max(cursor, p.at);
+  }
+  pieces.push({ from: cursor, to: null });
+  const cuts = pieces.filter((x) => x.silence == null);
+  const parts = [`${input}${level},${fmt},asplit=${cuts.length}${cuts.map((_, i) => `[v${i}]`).join('')}`];
+  let c = 0;
+  const labels = pieces.map((x, i) => {
+    if (x.silence != null) { parts.push(silence(x.silence, `[p${i}]`)); return `[p${i}]`; }
+    parts.push(`[v${c++}]atrim=start=${x.from.toFixed(6)}${x.to != null ? `:end=${x.to.toFixed(6)}` : ''},asetpts=PTS-STARTPTS[p${i}]`);
+    return `[p${i}]`;
+  });
+  parts.push(`${labels.join('')}concat=n=${labels.length}:v=0:a=1[a]`);
+  return parts.join(';');
+}
+
+/* ── captions ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+// out/captions.<lang>.srt from build/words.json: at most 2 lines of at most 42 characters per caption, a new caption at the
+// end of a sentence, at a pause in the voice, and before one would stay up over 6 s; lines split where they balance best,
+// after a comma when there is one. Each caption stays up at least 1 s when the next one leaves room. Names spelled for the
+// voice (brand voice.pronunciation, e.g. {"acme": "ack me"}) are written their real way again.
+export const CAPTION = { maxChars: 42, maxLines: 2, maxSeconds: 6, minSeconds: 1, gap: 0.8 };
+const capNorm = (w) => String(w).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}']+/gu, '');
+export function respell(words, pronunciation = {}) {
+  const pairs = Object.entries(pronunciation || {}).map(([real, said]) => [String(real), String(said).split(/\s+/).map(capNorm).filter(Boolean)]).filter(([, t]) => t.length).sort((a, b) => b[1].length - a[1].length);
+  if (!pairs.length) return words;
+  const out = [];
+  for (let i = 0; i < words.length;) {
+    const hit = pairs.find(([, t]) => t.every((x, k) => words[i + k] && capNorm(words[i + k].w) === x));
+    if (!hit) { out.push(words[i]); i++; continue; }
+    const [real, t] = hit, first = words[i], last = words[i + t.length - 1];
+    const lead = (/^[^\p{L}\p{N}]*/u.exec(first.w) || [''])[0], trail = (/[^\p{L}\p{N}]*$/u.exec(last.w) || [''])[0];
+    const cap = /^\p{Lu}/u.test(first.w.slice(lead.length)) ? real.charAt(0).toUpperCase() + real.slice(1) : real;
+    out.push({ w: lead + cap + trail, s: first.s, e: last.e });
+    i += t.length;
+  }
+  return out;
+}
+export function captionLines(ws, { maxChars = CAPTION.maxChars, maxLines = CAPTION.maxLines } = {}) {
+  const text = ws.map((w) => w.w).join(' ');
+  if (text.length <= maxChars || ws.length === 1) return [text];
+  if (maxLines < 2) return null;
+  let best = null;
+  for (let p = 1; p < ws.length; p++) {
+    const a = ws.slice(0, p).map((w) => w.w).join(' '), b = ws.slice(p).map((w) => w.w).join(' ');
+    if (a.length > maxChars || b.length > maxChars) continue;
+    const score = Math.abs(a.length - b.length) - (/[,;:]["')]*$/.test(ws[p - 1].w) ? 12 : 0) + (a.length > b.length ? 2 : 0);
+    if (!best || score < best.score) best = { score, lines: [a, b] };
+  }
+  return best ? best.lines : null;
+}
+export function captionCues(words, opts = {}) {
+  const o = { ...CAPTION, ...opts };
+  const ws = respell((words || []).filter((w) => String(w.w || '').trim()), o.pronunciation);
+  const groups = [];
+  let cur = [];
+  const flush = (upto = cur.length) => { if (upto > 0) groups.push(cur.slice(0, upto)); cur = cur.slice(upto); };
+  for (const w of ws) {
+    if (cur.length) {
+      const prev = cur.at(-1);
+      const sentence = /[.!?]["')\]]*$/.test(prev.w) && (prev.e - cur[0].s >= o.minSeconds || cur.map((x) => x.w).join(' ').length >= 20);
+      if (w.s - prev.e > o.gap || sentence || w.e - cur[0].s > o.maxSeconds) flush();
+      else if (!captionLines([...cur, w], o)) {
+        // full: end the caption after the last comma in its second half, if there is one, else here
+        let j = -1;
+        for (let k = cur.length - 1; k >= Math.floor(cur.length / 2); k--) if (/[,;:]["')]*$/.test(cur[k].w)) { j = k; break; }
+        flush(j >= 0 ? j + 1 : cur.length);
+        if (cur.length && !captionLines([...cur, w], o)) flush();
+      }
+    }
+    cur.push(w);
+  }
+  flush();
+  return groups.map((g, i) => {
+    const start = g[0].s, next = groups[i + 1]?.[0].s ?? Infinity;
+    let end = Math.min(Math.max(g.at(-1).e, start + o.minSeconds), next - 0.04);
+    if (end <= start) end = Math.min(start + 0.3, next);
+    return { start: +start.toFixed(3), end: +end.toFixed(3), lines: captionLines(g, o) || [g.map((w) => w.w).join(' ')] };
+  });
+}
+const srtTime = (t) => { const ms = Math.max(0, Math.round(t * 1000)); const h = Math.floor(ms / 3600000), m = Math.floor(ms / 60000) % 60, s = Math.floor(ms / 1000) % 60; return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(ms % 1000).padStart(3, '0')}`; };
+export const srt = (cues) => cues.map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.lines.join('\n')}\n`).join('\n');
+export const LANGUAGE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+export function captionLanguage(cfg = {}, brand = null) { return String(cfg.language || brand?.cfg?.youtube?.language || 'en').trim(); }
+function captionsCmd(video) {
+  const wordsFile = path.join(video.dir, 'build', 'words.json');
+  const words = readJSON(wordsFile, null);
+  if (!Array.isArray(words) || !words.length) die('no build/words.json yet: voice the script first (video voice <folder>)');
+  const brand = checks.findBrand(video.dir);
+  const lang = captionLanguage(video.cfg, brand);
+  if (!LANGUAGE.test(lang)) die(`the language "${lang}" is not a language code like en, es or pt-BR (video.json "language" or brand.json youtube.language)`);
+  const cues = captionCues(words, { pronunciation: brand?.cfg.voice?.pronunciation });
+  const out = path.join(video.dir, 'out', `captions.${lang}.srt`);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, srt(cues));
+  const recFile = path.join(video.dir, 'build', 'captions.json'), rec = readJSON(recFile, {}) || {};
+  rec[lang] = { words: checks.sha256File(wordsFile), at: new Date().toISOString() };
+  fs.writeFileSync(recFile, JSON.stringify(rec, null, 1) + '\n');
+  const longest = Math.max(...cues.flatMap((c) => c.lines.map((l) => l.length)));
+  console.log(`out/captions.${lang}.srt: ${cues.length} captions from build/words.json (lines up to ${longest} characters). The upload adds it to the video (it needs the full YouTube sign-in); for a video already up: video youtube captions <folder>.`);
+  if (scenes.standInIsActive?.(video.dir)) console.log('WARNING: these are the STAND-IN\'s made-up word times. Make the captions again after the real voice (video voice, then video captions).');
 }
 
 /* ── chapters ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -207,7 +355,8 @@ function chapters(video) {
 
 /* ── thumbnail ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
 // out/thumbnail.jpg (1280x720): a frame of the video, and with --text the words drawn over it (heavy condensed capitals,
-// one *word* in the accent colour, a dark wash behind them so they read at phone size). --name b writes a version to
+// one *word* in the accent colour, a dark wash behind them so they read at phone size). --plain (or video.json
+// "thumbnail": {"plain": true}) draws every word in white, no accent colour. --name b writes a version to
 // out/thumbnails/b.jpg instead (for YouTube's thumbnail test); --use b makes that version the thumbnail that is uploaded.
 export function thumbnailNotes(text, title = '') {
   const notes = [];
@@ -218,9 +367,9 @@ export function thumbnailNotes(text, title = '') {
   if (words.length && same / words.length > 0.5) notes.push('the thumbnail repeats the title: let it add something the title does not say');
   return notes;
 }
-function thumbPage(frame, text, { accent, font, side }) {
+export function thumbPage(frame, text, { accent, font, side, plain = false }) {
   const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const words = esc(text).replace(/\*([^*]+)\*/g, '<b>$1</b>');
+  const words = plain ? esc(String(text).replace(/\*/g, '')) : esc(text).replace(/\*([^*]+)\*/g, '<b>$1</b>');
   return `<!DOCTYPE html><html><head><style>${font ? `@font-face{font-family:T;src:url(${font})}` : ''}
 html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#000}
 .f{position:absolute;inset:0;background:url(${frame}) center/cover}
@@ -261,7 +410,8 @@ async function thumbnail(video, flags) {
     const browser = await launch();
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-      await page.setContent(thumbPage(`data:image/jpeg;base64,${Buffer.from(jpg).toString('base64')}`, text, { accent, font, side: flags.side === 'right' ? 'right' : 'left' }));
+      const plain = Boolean(flags.plain) || video.cfg.thumbnail?.plain === true;
+      await page.setContent(thumbPage(`data:image/jpeg;base64,${Buffer.from(jpg).toString('base64')}`, text, { accent, font, side: flags.side === 'right' ? 'right' : 'left', plain }));
       await page.evaluate(() => document.fonts.ready);
       fs.writeFileSync(target, await page.screenshot({ type: 'jpeg', quality: 90 }));
     } finally { await browser.close().catch(() => {}); }
@@ -366,15 +516,17 @@ async function main() {
       chapters(v);
     });
     case 'chapters': return run(() => chapters(openVideo(arg)));
+    case 'captions': return run(() => captionsCmd(openVideo(arg)));
     case 'facts': return run(() => factsCmd(loose, flags));
     case 'approve': return run(() => {
       const v = openVideo(arg), which = loose[2];
-      const rec = checks.approve(v.dir, which, { note: typeof flags.note === 'string' ? flags.note : '', cfg: v.cfg, researchOk: researchState(v.dir, v.cfg) });
+      const rec = checks.approve(v.dir, which, { note: typeof flags.note === 'string' ? flags.note : '', cfg: v.cfg, researchOk: researchState(v.dir, v.cfg), watched: Boolean(flags.watched) });
       console.log(`approved: ${which} (${rec.at}), written to approvals.md`);
+      if (which === 'final' && !rec.watched) console.log('note: not marked as watched in full. The upload needs it: once the person has watched the whole final cut, run this again with --watched.');
     });
     case 'qa': return run(() => {
       const v = openVideo(arg);
-      const r = checks.qa(v.dir, { standIn: Boolean(scenes.standInIsActive?.(v.dir)) });
+      const r = checks.qa(v.dir, { standIn: Boolean(scenes.standInIsActive?.(v.dir)), cfg: v.cfg });
       for (const c of r.checks) console.log(`${c.status.padEnd(4)}  ${c.name.padEnd(13)} ${c.text}`);
       console.log(`QA: ${r.result}  (build/qa.json)`);
       if (r.result !== 'PASS') process.exitCode = 1;
@@ -405,17 +557,24 @@ async function main() {
       R.makeReels(v, plans, { kit: path.join(REEL_ENGINE, 'tools', 'kit.mjs') });
       console.log(`done. In the brand folder, /bagelunit-reels takes each reel on: a new first line (the hook), facts-from-video.md cleared into brand/facts.md, its own voice, gates A, B and C.`);
     });
+    case 'review': {
+      const R = await import('./review.mjs');
+      try { R.review(path.resolve(arg || '.'), loose.slice(2).map((f) => path.resolve(f.replace(/^~(?=$|[\\/])/, os.homedir())))); } catch (e) { console.error(e.message); process.exitCode = 1; return; }
+      const b = checks.findBrand(path.resolve(arg || '.'));
+      if (b && fs.existsSync(path.join(b.dir, 'videos', PAGE))) await drawDashboard(path.join(b.dir, 'videos'), { quiet: true });
+      return;
+    }
     case 'dashboard': return run(async () => {
       const file = await drawDashboard(dashboardRoot(arg), { credits: Boolean(flags.credits) });
       if (flags.open) spawnSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [file], { stdio: 'ignore' });
     });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
-      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 23).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1).filter((l, i, a) => a.slice(0, i + 1).every((x) => x.startsWith('//'))).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
       if (cmd) process.exitCode = 1;
   }
 }
-const CHANGES = new Set(['new', 'voice', 'stand-in', 'render', 'thumbnail', 'facts', 'approve', 'qa', 'tidy', 'youtube']);
+const CHANGES = new Set(['new', 'voice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'youtube']);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { loose } = parse(process.argv.slice(2));
   Promise.resolve(main()).then(() => {

@@ -10,7 +10,8 @@
     "channel_name": "",
     "handle": "",
     "channel_id": "",
-    "privacy": "private"
+    "privacy": "private",
+    "language": "en"
   },
   "colors": {
     "accent": ""

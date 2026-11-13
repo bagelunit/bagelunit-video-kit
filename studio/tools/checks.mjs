@@ -164,7 +164,7 @@ const ABSOLUTE = /\b(only|never|always|best|worst|every|largest|biggest|smallest
 function scopeFiles(dir, scope, brand) {
   const f = ['script.txt', 'scenes.json', 'research.md'].map((x) => path.join(dir, x));
   if (brand) f.push(path.join(brand.dir, 'brand', 'facts.md'));
-  if (scope === 'final') f.push(path.join(dir, 'out', 'youtube.txt'));
+  if (scope === 'final') f.push(path.join(dir, 'out', 'youtube.txt'), path.join(dir, 'out', 'pinned-comment.txt'));
   return f;
 }
 
@@ -185,7 +185,7 @@ export function factCheck(dir, { scope = 'script', cfg = {} } = {}) {
   const script = read(path.join(dir, 'script.txt'));
   for (const s of script.split(/(?<=[.!?])\s+|\n{2,}/)) if (s.trim()) items.push({ where: 'script', text: s.trim() });
   for (const s of shownText(dir)) items.push({ where: 'on screen', text: s });
-  if (scope === 'final') { const y = read(path.join(dir, 'out', 'youtube.txt')); for (const l of y.split('\n')) if (l.trim() && !/^\d+:\d\d/.test(l.trim())) items.push({ where: 'youtube.txt', text: l.trim() }); }
+  if (scope === 'final') for (const name of ['youtube.txt', 'pinned-comment.txt']) { const y = read(path.join(dir, 'out', name)); for (const l of y.split('\n')) if (l.trim() && !/^\d+:\d\d/.test(l.trim())) items.push({ where: name, text: l.trim() }); }
   const errors = [], warnings = [], sheet = [];
   const soft = Boolean(cfg.no_research);
   for (const it of items) {
@@ -242,9 +242,11 @@ function logApproval(dir, heading, line) {
   fs.writeFileSync(f, text);
 }
 const mapFiles = (dir) => ['outline.md', 'research.md'].map((x) => path.join(dir, x));
-const finalFiles = (dir) => ['video.mp4', 'thumbnail.jpg', 'youtube.txt'].map((x) => path.join(dir, 'out', x));
+// out/pinned-comment.txt (the comment the person pins by hand after the upload) is approved with the rest, when there is one
+const finalFiles = (dir) => ['video.mp4', 'thumbnail.jpg', 'youtube.txt', 'pinned-comment.txt'].map((x) => path.join(dir, 'out', x));
 
-export function approve(dir, which, { note = '', cfg = {}, researchOk = { ok: true } } = {}) {
+// final: watched = the person says they watched the whole final cut, start to end (the upload with --yes needs it)
+export function approve(dir, which, { note = '', cfg = {}, researchOk = { ok: true }, watched = false } = {}) {
   const f = path.join(dir, 'build', 'approvals.json'), all = readJSON(f, {});
   fs.mkdirSync(path.dirname(f), { recursive: true });
   if (which === 'map') {
@@ -258,8 +260,8 @@ export function approve(dir, which, { note = '', cfg = {}, researchOk = { ok: tr
     const q = qaCurrent(dir); if (!q.ok) throw new Error(q.why);
     const fc = factsCurrent(dir, 'final'); if (!fc.ok) throw new Error(fc.why);
     const files = Object.fromEntries(finalFiles(dir).map((x) => [path.basename(x), sha256File(x)]));
-    all.final = { at: now(), note, files };
-    logApproval(dir, 'Final', `approved${note ? `: ${note}` : ''}: video.mp4 ${files['video.mp4'].slice(0, 12)}${files['thumbnail.jpg'] ? `, thumbnail ${files['thumbnail.jpg'].slice(0, 12)}` : ''}${files['youtube.txt'] ? `, youtube.txt ${files['youtube.txt'].slice(0, 12)}` : ''}; QA PASS; fact check PASS`);
+    all.final = { at: now(), note, files, watched: Boolean(watched) };
+    logApproval(dir, 'Final', `approved${note ? `: ${note}` : ''}: video.mp4 ${files['video.mp4'].slice(0, 12)}${files['thumbnail.jpg'] ? `, thumbnail ${files['thumbnail.jpg'].slice(0, 12)}` : ''}${files['youtube.txt'] ? `, youtube.txt ${files['youtube.txt'].slice(0, 12)}` : ''}${files['pinned-comment.txt'] ? `, pinned comment ${files['pinned-comment.txt'].slice(0, 12)}` : ''}; QA PASS; fact check PASS; ${watched ? 'watched the whole final cut' : 'NOT marked as watched in full (the upload needs --watched)'}`);
   } else throw new Error('approve map or approve final');
   fs.writeFileSync(f, JSON.stringify(all, null, 2) + '\n');
   return all[which];
@@ -273,8 +275,8 @@ export function approvalCurrent(dir, which) {
     return { ok: true, why: `map approved ${rec.at}` };
   }
   if (!rec) return { ok: false, why: 'the final video has not been approved: video qa, video facts --scope final, show the person, then  video approve <folder> final' };
-  for (const x of finalFiles(dir)) if ((sha256File(x) || null) !== (rec.files[path.basename(x)] || null)) return { ok: false, why: `out/${path.basename(x)} changed after the final approval: approve again` };
-  return { ok: true, why: `final approved ${rec.at}` };
+  for (const x of finalFiles(dir)) if ((sha256File(x) || null) !== (rec.files[path.basename(x)] || null)) return { ok: false, why: `out/${path.basename(x)} ${rec.files[path.basename(x)] ? 'changed' : 'was added'} after the final approval: approve again` };
+  return { ok: true, watched: rec.watched === true, why: `final approved ${rec.at}${rec.watched ? ', watched in full' : ''}` };
 }
 
 /* ── quality check of the finished file ─────────────────────────────────────────────────────────────────────────────── */
@@ -282,7 +284,19 @@ export function approvalCurrent(dir, which) {
 // stretches where the picture stops moving. Writes build/qa.json tied to the file's SHA-256.
 export const QA_BARS = { lufs: [-15, -13], lufsWarn: [-16, -12], truePeak: -1, black: 0.5, frozenWarn: 2, frozenFail: 4 };
 
-export function qa(dir, { standIn = false } = {}) {
+// video.json "end_card": seconds of picture after the voice (a card for YouTube's end screen). The length check then allows
+// the video to run that much longer than the voice, and a still picture that holds to the end, no longer than the end card
+// (plus the 4 s a still may last anyway), is the card, not a fault. A "tail" (the hold after the last word, 0.6 s by
+// default) longer than the voice's own silence is allowed the same way.
+export function endAllowance(cfg = {}, words = [], voLen = 0) {
+  const card = Math.max(0, Number(cfg.end_card) || 0);
+  const last = Array.isArray(words) && words.length ? words.at(-1).e : 0;
+  const tail = Math.max(0, last + Number(cfg.tail ?? 0.6) - voLen);
+  return { card, extra: card + (last ? tail : 0) };
+}
+
+export function qa(dir, { standIn = false, cfg = null } = {}) {
+  cfg = cfg || readJSON(path.join(dir, 'video.json'), {}) || {};
   const mp4 = path.join(dir, 'out', 'video.mp4');
   const checks = [];
   const add = (name, status, text) => checks.push({ name, status, text });
@@ -294,7 +308,8 @@ export function qa(dir, { standIn = false } = {}) {
   const specOk = v && v.codec_name === 'h264' && v.width === 1920 && v.height === 1080 && Math.abs(fps - 30) < 0.01 && a && a.codec_name === 'aac';
   add('spec', specOk ? 'PASS' : 'FAIL', `${v ? `${v.codec_name} ${v.width}x${v.height} ${fps.toFixed(2)} fps` : 'no picture'}, ${a ? a.codec_name : 'no sound'}, ${(size / 1048576).toFixed(1)} MB, ${dur.toFixed(1)} s`);
   const voLen = Number(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path.join(dir, 'audio', 'vo.mp3')], { encoding: 'utf8' }).stdout) || 0;
-  if (voLen) add('length', dur >= voLen - 0.1 && dur - voLen <= 2 ? 'PASS' : 'FAIL', `video ${dur.toFixed(2)} s, voice ${voLen.toFixed(2)} s`);
+  const allow = endAllowance(cfg, readJSON(path.join(dir, 'build', 'words.json'), []), voLen);
+  if (voLen) add('length', dur >= voLen - 0.1 && dur - voLen <= 2 + allow.extra ? 'PASS' : 'FAIL', `video ${dur.toFixed(2)} s, voice ${voLen.toFixed(2)} s${allow.card ? `, end card ${allow.card.toFixed(2)} s` : ''}${allow.extra > allow.card + 0.01 ? `, tail ${(allow.extra - allow.card).toFixed(2)} s` : ''}`);
   else add('length', 'FAIL', 'audio/vo.mp3 is missing');
   add('voice', standIn ? 'FAIL' : 'PASS', standIn ? 'the stand-in tone, not a voice' : 'a real voice');
   const r = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', mp4, '-filter_complex',
@@ -310,8 +325,10 @@ export function qa(dir, { standIn = false } = {}) {
   add('black', blacks.length ? 'FAIL' : 'PASS', blacks.length ? blacks.map((b) => `${b.t.toFixed(1)} s for ${b.d.toFixed(1)} s`).join(', ') : `no black stretch over ${QA_BARS.black} s`);
   const starts = [...log.matchAll(/freeze_start: ([\d.]+)/g)].map((m) => +m[1]), durs = [...log.matchAll(/freeze_duration: ([\d.]+)/g)].map((m) => +m[1]);
   const frozen = starts.map((t, i) => ({ t, d: durs[i] ?? Math.max(0, dur - t) }));
-  const bad = frozen.filter((f) => f.d >= QA_BARS.frozenFail), slow = frozen.filter((f) => f.d < QA_BARS.frozenFail);
-  add('still picture', bad.length ? 'FAIL' : slow.length ? 'WARN' : 'PASS', frozen.length ? frozen.map((f) => `${f.t.toFixed(1)} s for ${f.d.toFixed(1)} s`).join(', ') : `nothing still for ${QA_BARS.frozenWarn} s or more`);
+  const isCard = (f) => allow.card > 0 && f.t + f.d >= dur - 0.25 && f.d <= allow.card + QA_BARS.frozenFail;
+  const card = frozen.filter(isCard), rest = frozen.filter((f) => !isCard(f));
+  const bad = rest.filter((f) => f.d >= QA_BARS.frozenFail), slow = rest.filter((f) => f.d < QA_BARS.frozenFail);
+  add('still picture', bad.length ? 'FAIL' : slow.length ? 'WARN' : 'PASS', frozen.length ? frozen.map((f) => `${f.t.toFixed(1)} s for ${f.d.toFixed(1)} s${card.includes(f) ? ' (the end card)' : ''}`).join(', ') : `nothing still for ${QA_BARS.frozenWarn} s or more`);
   const result = checks.some((c) => c.status === 'FAIL') ? 'FAIL' : 'PASS';
   const out = { result, sha: sha256File(mp4), at: now(), checks };
   fs.mkdirSync(path.join(dir, 'build'), { recursive: true });

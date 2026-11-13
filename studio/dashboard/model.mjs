@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findBrand, researchState } from '../tools/checks.mjs';
+import { latestReview } from '../tools/review.mjs';
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
@@ -85,7 +86,7 @@ export function readVideo(dir, pageDir) {
   const scriptCurrent = facts.script?.result === 'PASS' && factsTime >= Math.max(mtime(J('script.txt')), mtime(J('scenes.json')), mtime(J('research.md'))) - 1;
   const finalFactsCurrent = facts.final?.result === 'PASS' && factsTime >= Math.max(mtime(J('script.txt')), mtime(J('scenes.json')), mtime(J('out', 'youtube.txt'))) - 1;
   const qaCurrent = qa && mtime(J('build', 'qa.json')) >= mtime(mp4) - 1;
-  const finalCurrent = Boolean(appr.final) && mtime(J('build', 'approvals.json')) >= Math.max(mtime(mp4), mtime(J('out', 'thumbnail.jpg')), mtime(J('out', 'youtube.txt'))) - 1;
+  const finalCurrent = Boolean(appr.final) && appr.final.watched === true && mtime(J('build', 'approvals.json')) >= Math.max(mtime(mp4), mtime(J('out', 'thumbnail.jpg')), mtime(J('out', 'youtube.txt')), mtime(J('out', 'pinned-comment.txt'))) - 1;
   const voiced = exists(J('audio', 'vo.mp3')) && !standIn && words.length > 0;
   const rendered = exists(mp4);
   const ytText = exists(J('out', 'youtube.txt'));
@@ -106,7 +107,7 @@ export function readVideo(dir, pageDir) {
   const name = cfg.title || path.basename(dir);
   if (step === 'map' && research.ok && appr.map) issues.push({ prio: 'now', text: 'The map or the research changed after you approved it: look again and say go' });
   else if (step === 'map' && exists(J('outline.md')) && read(J('outline.md')).trim()) issues.push({ prio: 'now', text: 'The report and the map are ready for your go-ahead' });
-  if (step === 'final') issues.push({ prio: 'now', text: appr.final ? 'The video changed after you approved it: watch it again and say yes' : 'Ready for you to watch and approve' });
+  if (step === 'final') issues.push({ prio: 'now', text: appr.final && appr.final.watched !== true ? 'Approved, but not marked as watched in full: watch the whole final cut, then say so' : appr.final ? 'The video changed after you approved it: watch it again and say yes' : 'Ready for you to watch all the way through and approve' });
   if (step === 'upload') issues.push({ prio: 'now', text: 'Approved: say when to upload it' });
   if (qa && qaCurrent && qa.result === 'FAIL') issues.push({ prio: 'soon', text: `The quality check failed: ${qa.checks.filter((c) => c.status === 'FAIL').map((c) => c.name).join(', ')}` });
   if (facts.script?.result === 'FAIL') issues.push({ prio: 'soon', text: 'The fact check was recorded as FAIL' });
@@ -156,7 +157,11 @@ export function load(root, { pageDir = root } = {}) {
   const rank = { now: 0, soon: 1, later: 2 };
   needs.sort((a, b) => rank[a.prio] - rank[b.prio]);
   const uploaded = videos.filter((v) => v.step === 'done');
+  // the newest channel review (video review), as a link from the page
+  const rv = brand ? latestReview(brand.dir) : null;
+  const review = rv ? { date: rv.date, headline: rv.headline, href: path.relative(pageDir, rv.file).split(path.sep).join('/') } : null;
   return {
+    review,
     root, brand: brand ? { name: brand.cfg.name || path.basename(brand.dir), accent: brand.cfg.colors?.accent || null } : null,
     name: brand ? brand.cfg.name || path.basename(brand.dir) : path.basename(root),
     accent: (brand?.cfg.colors?.accent && /^#[0-9a-f]{3,8}$/i.test(brand.cfg.colors.accent)) ? brand.cfg.colors.accent : '#E4572E',

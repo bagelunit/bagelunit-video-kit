@@ -1,6 +1,6 @@
 # BagelUnit Video Kit
 
-Make YouTube videos with Claude Code: give it a topic and it researches it, maps the video from start to end for your approval, writes the script, voices it, animates every scene in one of 19 styles, checks the facts and the file, and uploads it to your channel, privately, once you say yes.
+Make YouTube videos with Claude Code: give it a topic and it researches it, maps the video from start to end for your approval, writes the script, voices it, animates every scene in one of 20 styles, checks the facts and the file, and uploads it to your channel, privately, once you say yes.
 
 - **Long or standard, 1920x1080.** A two-minute explainer or an hour-long deep dive: there is no length limit; past about 20 minutes it suggests splitting into parts.
 - **Researched, with sources.** Every number said or shown must come from the video's research or your cleared facts. A fact check runs before the voice and again before upload.
@@ -32,7 +32,7 @@ topic -> style -> research (sources) -> report and map -> YOUR GO-AHEAD
 
 | Folder | What |
 |---|---|
-| `studio/` | the engine, installed as the Claude Code skill `bagelunit-video`: the work order (`SKILL.md`), the commands (`tools/`), the 19 scene styles, the dashboard and the playbook |
+| `studio/` | the engine, installed as the Claude Code skill `bagelunit-video`: the work order (`SKILL.md`), the commands (`tools/`), the 20 scene styles, the dashboard and the playbook |
 | `template/` | a channel folder, copied by `/video-setup` for each channel |
 | `setup/` | the installer, the channel folder maker, the repo scan and the tests |
 | `docs/` | notes for people changing the kit |

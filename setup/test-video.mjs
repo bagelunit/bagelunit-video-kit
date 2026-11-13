@@ -56,8 +56,8 @@ await test('parts and problems: title, limits, chapters appended, no #Shorts', (
   assert.ok(yt.problems(p, { ...ok, privacy: 'everyone' }).length);
 });
 
-const approveFinal = (d) => { fs.writeFileSync(path.join(d, 'build', 'approvals.json'), JSON.stringify({ final: { at: 'test', files: Object.fromEntries(['video.mp4', 'thumbnail.jpg', 'youtube.txt'].map((x) => [x, checks.sha256File(path.join(d, 'out', x))])) } })); };
-const fakeFolder = ({ standIn = false, approved = true } = {}) => {
+const approveFinal = (d, { watched = true } = {}) => { fs.writeFileSync(path.join(d, 'build', 'approvals.json'), JSON.stringify({ final: { at: 'test', watched, files: Object.fromEntries(['video.mp4', 'thumbnail.jpg', 'youtube.txt', 'pinned-comment.txt'].map((x) => [x, checks.sha256File(path.join(d, 'out', x))])) } })); };
+const fakeFolder = ({ standIn = false, approved = true, watched = true } = {}) => {
   const d = tmp();
   fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.mkdirSync(path.join(d, 'audio'), { recursive: true }); fs.mkdirSync(path.join(d, 'build'), { recursive: true });
   fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: 'T' }));
@@ -66,10 +66,10 @@ const fakeFolder = ({ standIn = false, approved = true } = {}) => {
   fs.writeFileSync(path.join(d, 'out', 'chapters.txt'), '0:00 One\n0:30 Two\n1:00 Three\n');
   fs.writeFileSync(path.join(d, 'audio', 'vo.mp3'), 'voice');
   if (standIn) fs.writeFileSync(path.join(d, 'build', 'voice-stand-in.json'), JSON.stringify({ sha: createHash('sha256').update('voice').digest('hex') }));
-  if (approved) approveFinal(d);
+  if (approved) approveFinal(d, { watched });
   return d;
 };
-const cred = () => { const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'id', client_secret: 'secret-xyz', refresh_token: 'rt' })); return c; };
+const cred = (scope) => { const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'id', client_secret: 'secret-xyz', refresh_token: 'rt', ...(scope ? { scope } : {}) })); return c; };
 function fakeYouTube({ cut = false, channel = null } = {}) {
   const video = JSON.stringify({ id: 'vid1', ...(channel ? { snippet: { channelId: channel } } : {}) });
   const calls = [];
@@ -83,6 +83,7 @@ function fakeYouTube({ cut = false, channel = null } = {}) {
       return new Response(video, { status: 200 });
     }
     if (u.includes('thumbnails/set')) return new Response('{}', { status: 200 });
+    if (u.includes('youtube/v3/captions')) return new Response(JSON.stringify({ id: 'cap1' }), { status: 200 });
     return new Response('{}', { status: 404 });
   };
   return { fetchImpl, calls };
@@ -189,7 +190,8 @@ await test('after an upload the channel is checked: a wrong Brand Account is a l
 await test('styles are wide, registered, and every file matches its fingerprint', () => {
   const reg = scenes.registry();
   assert.equal(reg.format, 'wide'); assert.deepEqual(reg.size, [1920, 1080]);
-  assert.equal(scenes.sceneStyleIds().length, 19);
+  assert.equal(scenes.sceneStyleIds().length, 20);
+  assert.ok(scenes.sceneStyleIds().includes('deep-zoom'));
   for (const s of reg.styles) for (const [file, fp] of Object.entries(s.files)) {
     const h = createHash('sha256').update(fs.readFileSync(path.join(REPO, 'studio', 'styles', s.id, file))).digest('hex').slice(0, 16);
     assert.equal(h, fp, `${s.id}/${file} was edited by hand: sync from the styles repo instead`);
@@ -455,6 +457,383 @@ await test('reels from a channel folder go to the linked Reel Kit brand folder',
   assert.equal(p.dir, path.join(reels, 'reels', 'moon-reel-1'));
   fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ slug: 'space' }));
   assert.throws(() => R.planReels({ dir: d, name: 'moon', cfg: { style: 'clean-shapes' } }, [[1, 1]]), /reels_folder/);
+});
+
+
+/* ── 2026-11-13 batch: pauses, word clock, render cache, captions, music, end card, thumbnail, YouTube, review ─────── */
+const ff = (args) => { const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); };
+const probe = (f) => Number(spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f], { encoding: 'utf8' }).stdout);
+const maxVolume = (f, ss, t) => { const r = spawnSync('ffmpeg', ['-hide_banner', '-ss', String(ss), '-t', String(t), '-i', f, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' }); const m = /max_volume: (-?[\d.]+|-inf) dB/.exec(r.stderr); return m ? (m[1] === '-inf' ? -Infinity : Number(m[1])) : null; };
+const sc = (n, narration, extra = {}) => ({ n, id: `s${n}`, narration, ...extra });
+const W = (list) => list.map(([w, s, e]) => ({ w, s, e }));
+
+await test('pause: silence goes between words before the scene, words after move on, a straddling word is cut at the splice', () => {
+  const words = W([['one', 0.1, 0.4], ['two', 0.5, 0.9], ['three', 1.2, 1.5], ['four', 1.6, 1.9]]);
+  const plan = [sc(1, 'one two'), sc(2, 'three four', { pause: 4 })];
+  const placed = scenes.placePauses(plan, words, 2.2);
+  assert.deepEqual(placed.map((p) => [p.n, p.at, p.seconds]), [[2, 1.05, 4]]);
+  const r = scenes.applyPauses(words, placed);
+  assert.deepEqual(r.words.map((w) => [w.s, w.e]), [[0.1, 0.4], [0.5, 0.9], [5.2, 5.5], [5.6, 5.9]]);
+  assert.deepEqual(r.splices[0], { n: 2, id: 's2', seconds: 4, at: 1.05, from: 1.05 });
+  // a word that straddles the splice (the field case: it got a 4 s end) is cut at it
+  const bad = W([['one', 0.1, 0.4], ['two', 0.5, 1.3], ['three', 1.2, 1.5]]);
+  const cut = scenes.applyPauses(bad, [{ n: 2, id: 's2', seconds: 4, at: 1.1 }]);
+  assert.equal(cut.clamped, 1);
+  assert.deepEqual(cut.words[1], { w: 'two', s: 0.5, e: 1.1 });
+  assert.ok(cut.words.every((w) => w.e - w.s < 1), 'no word holds the silence');
+  // an intro with no words goes at the start, an end card at the end; two pauses in one place keep the scene order
+  const intro = scenes.placePauses([sc(1, '', { pause: 3 }), sc(2, 'one two three four')], words, 2.2);
+  assert.equal(intro[0].at, 0);
+  const end = scenes.placePauses([sc(1, 'one two three four'), sc(2, '', { pause: 5 })], words, 2.2);
+  assert.equal(end[0].at, 2.2);
+  const two = scenes.applyPauses(words, [{ n: 3, seconds: 1, at: 1.05 }, { n: 2, seconds: 2, at: 1.05 }]);
+  assert.deepEqual(two.splices.map((p) => [p.n, p.at]), [[2, 1.05], [3, 3.05]]);
+  assert.equal(two.words[2].s, 4.2);
+});
+
+await test('pause: the scene owns its silence, and the scene after a wordless intro keeps its full length', () => {
+  const plan = [sc(1, 'one two'), sc(2, '', { pause: 4 }), sc(3, 'three four five six seven eight')];
+  const words = W([['one', 0.1, 0.4], ['two', 0.5, 0.9], ['three', 1.2, 1.5], ['four', 1.6, 1.9], ['five', 2, 2.3], ['six', 2.4, 2.7], ['seven', 2.8, 3.1], ['eight', 3.2, 3.5]]);
+  const r = scenes.applyPauses(words, scenes.placePauses(plan, words, 3.8));
+  const t = scenes.timeScenes(plan, r.words, { voLength: 8.3, pauses: r.splices });
+  assert.ok(Math.abs(t[1].t0 - 1.05) < 0.034 && Math.abs(t[1].t1 - (5.2 - 0.15)) < 0.034, JSON.stringify(t[1]));
+  assert.ok(t[2].t1 - t[2].t0 > 2.5, `scene 3 lasts ${t[2].t1 - t[2].t0}`);
+  assert.ok(Math.abs(t.at(-1).t1 - 8.3) < 0.034);
+});
+
+const chunkDir = (root, name, words, len) => {
+  const d = path.join(root, 'build', 'voice', name); fs.mkdirSync(path.join(d, 'audio'), { recursive: true }); fs.mkdirSync(path.join(d, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'build', 'words.json'), JSON.stringify(words));
+  ff(['-f', 'lavfi', '-i', `sine=frequency=220:duration=${len}`, '-ac', '1', path.join(d, 'audio', 'vo.mp3')]);
+  return d;
+};
+
+await test('video voice joins with the pause spliced into vo.mp3, the clock shifted, build/pauses.json written', async () => {
+  const { joinVoice } = await import('../studio/tools/video.mjs');
+  const dir = tmp();
+  const a = chunkDir(dir, '001', W([['alpha', 0.1, 0.6], ['beta', 0.8, 1.4]]), 1.6);
+  const b = chunkDir(dir, '002', W([['gamma', 0.1, 0.7], ['delta', 0.9, 1.5]]), 1.6);
+  const plan = [sc(1, 'alpha beta'), sc(2, 'gamma delta', { pause: 3 })];
+  const lines = [];
+  const r = joinVoice(dir, [a, b], { plan, log: (x) => lines.push(x) });
+  const len = probe(path.join(dir, 'audio', 'vo.mp3'));
+  assert.ok(Math.abs(len - (1.6 + 0.45 + 1.6 + 3)) < 0.1, `length ${len}`);
+  const w = JSON.parse(fs.readFileSync(path.join(dir, 'build', 'words.json'), 'utf8'));
+  const at = r.splices[0].at;
+  assert.ok(at > 1.4 && at < 2.15, `splice at ${at}`);
+  assert.ok(Math.abs(w[2].s - (2.05 + 0.1 + 3)) < 0.01, `gamma at ${w[2].s}`);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'build', 'pauses.json'), 'utf8')).map((p) => [p.n, p.seconds]), [[2, 3]]);
+  assert.ok(maxVolume(path.join(dir, 'audio', 'vo.mp3'), at + 0.3, 2.4) < -60, 'silence where the pause is');
+  assert.ok(maxVolume(path.join(dir, 'audio', 'vo.mp3'), w[2].s, 0.5) > -30, 'the voice after it');
+  assert.ok(lines.some((x) => /pauses: 3.00 s for scene 2/.test(x)));
+  assert.equal(r.warnings.length, 0);
+  // no pause: no pauses.json, and the old join
+  joinVoice(dir, [a, b], { plan: [sc(1, 'alpha beta'), sc(2, 'gamma delta')], log: () => {} });
+  assert.ok(!fs.existsSync(path.join(dir, 'build', 'pauses.json')));
+  assert.ok(Math.abs(probe(path.join(dir, 'audio', 'vo.mp3')) - 3.65) < 0.05, 'the 0.45 s breath between chunks is in the audio, as the word clock counts it');
+  assert.ok(maxVolume(path.join(dir, 'audio', 'vo.mp3'), 1.7, 0.25) < -60, 'silence in the breath');
+  assert.ok(maxVolume(path.join(dir, 'audio', 'vo.mp3'), 2.15, 0.4) > -30, 'the second chunk starts where its words say');
+});
+
+await test('word clock check: a chunk whose words run past its audio is a warning with both times', async () => {
+  const { joinVoice } = await import('../studio/tools/video.mjs');
+  assert.equal(scenes.clockCheck(W([['a', 0, 1]]), 1.02), null);
+  assert.match(scenes.clockCheck(W([['a', 527, 529.1]]), 527.75), /1\.35 s past the audio \(the last word ends at 529\.10 s, the audio at 527\.75 s\)/);
+  const dir = tmp();
+  const a = chunkDir(dir, '001', W([['alpha', 0.1, 0.6], ['beta', 0.8, 2.9]]), 1.5);
+  const lines = [];
+  const r = joinVoice(dir, [a], { log: (x) => lines.push(x) });
+  assert.ok(r.warnings.some((x) => /chunk 1/.test(x) && /2\.90 s/.test(x)), r.warnings.join('\n'));
+  assert.ok(lines.some((x) => x.startsWith('WARNING:')));
+});
+
+const sceneVideo = (pauseOn = null) => {
+  const d = tmp();
+  const defs = scenes.styleInfo('clean-shapes').templateDefs.slice(0, 4);
+  const list = defs.map((t, i) => ({ template: t.id, props: t.exampleProps || {}, narration: t.exampleNarration || `Scene ${i} words here.`, ...(i + 1 === pauseOn ? { pause: 2 } : {}) }));
+  fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: 'T' }));
+  fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify({ scenes: list }));
+  fs.writeFileSync(path.join(d, 'script.txt'), list.map((s) => s.narration).join('\n\n'));
+  return d;
+};
+const quiet = async (fn) => { const log = console.log; console.log = () => {}; try { return await fn(); } finally { console.log = log; } };
+
+await test('render cache: a pause re-draws only the scene it is in; scenes that only moved keep their picture', async () => {
+  const d = sceneVideo();
+  const v = { dir: d, cfg: { style: 'clean-shapes' } };
+  await quiet(() => scenes.standIn(v));
+  const before = scenes.buildPages(v, scenes.prepare(v));
+  const s = JSON.parse(fs.readFileSync(path.join(d, 'scenes.json'), 'utf8')); s.scenes[1].pause = 2; fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify(s));
+  const stale = scenes.prepare(v);
+  assert.ok(stale.notes.some((n) => /not in the voice yet/.test(n)), 'a pause not yet in the voice is noted');
+  await quiet(() => scenes.standIn(v));
+  const prep = scenes.prepare(v);
+  assert.equal(prep.pauses.length, 1);
+  const after = scenes.buildPages(v, prep);
+  assert.equal(after[0].hash, before[0].hash, 'scene 1: same picture');
+  assert.notEqual(after[1].hash, before[1].hash, 'scene 2 holds the pause');
+  assert.equal(after[2].hash, before[2].hash, 'scene 3 moved by 2 s, same picture');
+  assert.notEqual(after[2].audio, before[2].audio, '... but its slice of the voice moved, so its clip sound is made again');
+  assert.ok(Math.abs(after[2].time.t0 - before[2].time.t0 - 2) < 1e-6);
+  assert.ok(after[1].time.t1 - after[1].time.t0 > before[1].time.t1 - before[1].time.t0 + 1.9);
+});
+
+await test('captions: two lines of 42 at most, a new caption per sentence and at pauses, names spelled their real way', async () => {
+  const { captionCues, srt, captionLines } = await import('../studio/tools/video.mjs');
+  const text = 'Volcanoes are openings in the crust where melted rock, gas and ash escape from deep below. Ack me Labs measured one. It erupted for nine days, and then it stopped, quite suddenly, without any warning at all for the people nearby.';
+  const words = fakeWordsFor(text);
+  const cues = captionCues(words, { pronunciation: { acme: 'ack me' } });
+  assert.ok(cues.every((c) => c.lines.length <= 2 && c.lines.every((l) => l.length <= 42)), JSON.stringify(cues));
+  assert.ok(cues.every((c, i) => c.end > c.start && (i === 0 || c.start >= cues[i - 1].end)), 'no overlaps');
+  assert.ok(cues.every((c) => c.end - c.start <= 7));
+  assert.ok(cues.some((c) => c.lines.join(' ').startsWith('Acme Labs')), 'respelled: ' + cues.map((c) => c.lines.join(' / ')).join(' | '));
+  assert.ok(cues.some((c) => /below\.$/.test(c.lines.at(-1))), 'a sentence ends its caption');
+  assert.deepEqual(captionLines(W([['short', 0, 1]])), ['short']);
+  const gap = captionCues(W([['before', 0, 0.5], ['after', 4, 4.5]]));
+  assert.equal(gap.length, 2, 'a pause starts a new caption');
+  assert.equal(gap[0].end, 1, 'held for at least 1 s');
+  assert.match(srt(gap), /^1\n00:00:00,000 --> 00:00:01,000\nbefore\n\n2\n00:00:04,000 --> 00:00:05,000\nafter\n$/);
+});
+function fakeWordsFor(text) { return scenes.fakeWords(text, 0.38); }
+
+await test('video captions writes out/captions.<lang>.srt in the channel language; the upload refuses it once the voice changed', async () => {
+  const ch = tmp(); fs.mkdirSync(path.join(ch, 'brand')); fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ slug: 'space', youtube: { language: 'es' } }));
+  const v = path.join(ch, 'videos', 'v1'); fs.cpSync(fakeFolder(), v, { recursive: true });
+  scenes.writeWords(v, fakeWordsFor('Hola a todos. Esto es una prueba.'));
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'captions', v], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const f = path.join(v, 'out', 'captions.es.srt');
+  assert.match(fs.readFileSync(f, 'utf8'), /^1\n00:00:00,350 --> /);
+  assert.deepEqual(yt.captionFiles(v).map((x) => x.language), ['es']);
+  assert.deepEqual(yt.staleCaptions(v), []);
+  scenes.writeWords(v, fakeWordsFor('Hola a todos. Esto es otra prueba.'));
+  await assert.rejects(yt.upload(v, { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /captions\.es\.srt was made before the voice last changed/);
+});
+
+await test('music bed: cut to the video, fade-in and fade-out, looped only when shorter, 3 s fade-out by default', () => {
+  assert.deepEqual(scenes.musicFade({}), [0, 3]);
+  assert.deepEqual(scenes.musicFade({ music_fade: [3, 8] }), [3, 8]);
+  assert.throws(() => scenes.musicFade({ music_fade: 4 }), /music_fade/);
+  assert.equal(scenes.musicBed({ seconds: 60, musicLength: 90 }).loop, false);
+  assert.equal(scenes.musicBed({ seconds: 60, musicLength: 20 }).loop, true);
+  assert.deepEqual(scenes.musicBed({ seconds: 4, fade: [3, 5] }).fade.map((x) => +x.toFixed(2)), [1.5, 2.5]);
+  const d = tmp(), m = path.join(d, 'm.wav'), out = path.join(d, 'bed.wav');
+  ff(['-f', 'lavfi', '-i', 'sine=frequency=330:duration=2', m]);
+  const bed = scenes.musicBed({ seconds: 6, musicLength: probe(m), fade: [1, 2], volume: 1 });
+  ff([...(bed.loop ? ['-stream_loop', '-1'] : []), '-i', m, '-filter_complex', `[0:a]${bed.chain}[a]`, '-map', '[a]', out]);
+  assert.ok(Math.abs(probe(out) - 6) < 0.05, `length ${probe(out)}`);
+  assert.ok(maxVolume(out, 0, 0.05) < maxVolume(out, 2.5, 0.5) - 20, 'fades in');
+  assert.ok(maxVolume(out, 5.9, 0.1) < maxVolume(out, 3, 0.5) - 15, 'fades out at the very end, not cut');
+});
+
+await test('qa: an end card after the voice passes the length check, and its still picture is the card, not a fault', () => {
+  const d = tmp(); fs.mkdirSync(path.join(d, 'out')); fs.mkdirSync(path.join(d, 'audio'));
+  ff(['-f', 'lavfi', '-i', 'sine=f=300:d=4', '-af', 'loudnorm=I=-14:TP=-1.5', '-ar', '44100', path.join(d, 'audio', 'vo.mp3')]);
+  ff(['-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30:duration=4', '-f', 'lavfi', '-i', 'color=c=0x336699:size=1920x1080:rate=30:duration=6', '-i', path.join(d, 'audio', 'vo.mp3'),
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1[v];[2:a]apad,atrim=0:10[a]', '-map', '[v]', '-map', '[a]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', path.join(d, 'out', 'video.mp4')]);
+  const plain = checks.qa(d, { cfg: {} });
+  assert.equal(plain.checks.find((c) => c.name === 'length').status, 'FAIL');
+  assert.equal(plain.checks.find((c) => c.name === 'still picture').status, 'FAIL');
+  const card = checks.qa(d, { cfg: { end_card: 6 } });
+  assert.equal(card.checks.find((c) => c.name === 'length').status, 'PASS', JSON.stringify(card.checks));
+  assert.notEqual(card.checks.find((c) => c.name === 'still picture').status, 'FAIL', JSON.stringify(card.checks));
+  assert.match(card.checks.find((c) => c.name === 'still picture').text, /end card/);
+  const t = scenes.timeScenes([sc(1, 'one two')], W([['one', 0.1, 0.4], ['two', 0.5, 0.9]]), { voLength: 1.6, endCard: 5 });
+  assert.ok(Math.abs(t[0].t1 - 6.6) < 0.034, JSON.stringify(t));
+});
+
+await test('thumbnail --plain: no accent-coloured word', async () => {
+  const { thumbPage } = await import('../studio/tools/video.mjs');
+  const opts = { accent: '#FFD23F', font: null, side: 'left' };
+  assert.match(thumbPage('x.jpg', 'Jupiter eats *Earth*', opts), /<b>Earth<\/b>/);
+  const plain = thumbPage('x.jpg', 'Jupiter eats *Earth*', { ...opts, plain: true });
+  assert.ok(!/<b>/.test(plain) && /Jupiter eats Earth/.test(plain));
+});
+
+await test('YouTube text: tags counted as YouTube does, language and publish time checked, sources added once', () => {
+  assert.equal(yt.tagChars(['volcano', 'how volcanoes form', '  ', ' lava ']), 7 + 20 + 4 + 2);
+  const m = yt.metadata({ title: 'T', description: 'D' }, { privacy: 'private', tags: [' a ', ''], language: 'en', publishAt: '2026-12-01T23:00:00.000Z' });
+  assert.deepEqual(m.snippet.tags, ['a']); assert.equal(m.snippet.defaultAudioLanguage, 'en'); assert.equal(m.status.publishAt, '2026-12-01T23:00:00.000Z');
+  const now = Date.parse('2026-11-13T12:00:00Z');
+  assert.match(yt.publishTime('2026-11-17', { privacy: 'private', now }).why, /offset/);
+  assert.match(yt.publishTime('2026-11-17T18:00:00', { privacy: 'private', now }).why, /offset/);
+  assert.match(yt.publishTime('2026-11-13T12:05:00Z', { privacy: 'private', now }).why, /15 minutes/);
+  assert.match(yt.publishTime('2026-11-17T18:00:00-05:00', { privacy: 'unlisted', now }).why, /--privacy private/);
+  assert.equal(yt.publishTime('2026-11-17T18:00:00-05:00', { privacy: 'private', now }).at, '2026-11-17T23:00:00.000Z');
+  const research = '# Research\n- a fact [a](https://example.org/a)\n## Sources\n1. [Survey 2025](https://example.org/survey) by them\n2. https://example.org/other\n';
+  const src = yt.researchSources(research);
+  assert.deepEqual(src.map((x) => x.url), ['https://example.org/survey', 'https://example.org/other']);
+  assert.match(yt.withSources('About it.', src).description, /About it\.\n\nSources:\nSurvey 2025: https:\/\/example.org\/survey\nhttps:\/\/example.org\/other$/);
+  assert.equal(yt.withSources('About it.\n\nSources: https://example.org/survey', src).added, 0);
+  assert.equal(yt.withSources('About it.', yt.researchSources(checks.RESEARCH_PAGE)).added, 0, 'the empty page has no sources');
+  assert.equal(yt.withSources('x'.repeat(4990), src).added, 0, 'never over the limit');
+});
+
+await test('upload dry run: bad tags, language and schedule are refused; the description gets the sources; pinned comment shown, never posted', async () => {
+  const d = fakeFolder();
+  const cfg = (x) => fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: 'T', ...x }));
+  const dry = (lines = []) => yt.upload(d, { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: (x) => lines.push(x) });
+  cfg({ tags: Array.from({ length: 60 }, (_, i) => `tag number ${i}`) }); await assert.rejects(dry(), /YouTube allows 500/);
+  cfg({ tags: 'one, two' }); await assert.rejects(dry(), /must be a list/);
+  cfg({ language: 'English' }); await assert.rejects(dry(), /not a language code/);
+  cfg({ publish_at: '2020-01-01T00:00:00Z' }); await assert.rejects(dry(), /15 minutes/);
+  cfg({ publish_at: '2099-01-01T10:00:00+01:00', tags: ['volcanoes'], language: 'en' });
+  fs.writeFileSync(path.join(d, 'research.md'), '# Research\n## Sources\n1. [Survey](https://example.org/survey)\n');
+  const lines = [];
+  let r = await dry(lines);
+  assert.equal(r.meta.status.publishAt, '2099-01-01T09:00:00.000Z');
+  assert.match(r.meta.snippet.description, /Sources:\nSurvey: https:\/\/example.org\/survey$/);
+  assert.ok(lines.join('\n').includes('sources:     1 added from research.md') && lines.join('\n').includes('watched:     yes'));
+  fs.writeFileSync(path.join(d, 'out', 'pinned-comment.txt'), 'Which volcano should we cover next?');
+  await assert.rejects(dry(), /pinned-comment\.txt was added after the final approval/);
+  approveFinal(d);
+  const l2 = []; await dry(l2);
+  assert.ok(l2.join('\n').includes('Which volcano should we cover next?') && /pin it by hand/.test(l2.join('\n')));
+  const f = fakeYouTube(), l3 = [];
+  await yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: cred(), log: (x) => l3.push(x) });
+  assert.ok(!f.calls.some((x) => /commentThreads|comments/.test(x.url)), 'the uploader posts no comment');
+  assert.ok(l3.some((x) => /pin the comment by hand/.test(x)));
+});
+
+await test('upload --yes needs the final approval to say the whole final cut was watched; approve final --watched records it', async () => {
+  const d = fakeFolder({ watched: false });
+  const lines = [];
+  await assert.rejects(yt.upload(d, { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: (x) => lines.push(x) }), /watched the whole final cut/);
+  assert.ok(lines.join('\n').includes('watched:     NOT recorded'));
+  await assert.rejects(yt.upload(d, { yes: true, fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /--watched/);
+  fs.writeFileSync(path.join(d, 'build', 'qa.json'), JSON.stringify({ result: 'PASS', sha: checks.sha256File(path.join(d, 'out', 'video.mp4')), at: 'x' }));
+  checks.recordFacts(d, { scope: 'final', result: 'PASS' });
+  checks.approve(d, 'final');
+  assert.equal(checks.approvalCurrent(d, 'final').watched, false);
+  checks.approve(d, 'final', { watched: true });
+  assert.equal(checks.approvalCurrent(d, 'final').watched, true);
+  assert.match(fs.readFileSync(path.join(d, 'approvals.md'), 'utf8'), /watched the whole final cut/);
+  assert.equal((await yt.upload(d, { yes: true, fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} })).id, 'vid1');
+});
+
+await test('captions after an upload: sent with the full sign-in, skipped with a note on upload-only, never twice unchanged', async () => {
+  const withCaptions = () => { const d = fakeFolder(); fs.writeFileSync(path.join(d, 'out', 'captions.en.srt'), '1\n00:00:00,000 --> 00:00:01,000\nHello\n'); return d; };
+  let d = withCaptions(), f = fakeYouTube(), lines = [];
+  await yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: cred(yt.SCOPES.join(' ')), log: (x) => lines.push(x) });
+  const call = f.calls.find((x) => x.url.includes('youtube/v3/captions'));
+  assert.ok(call, 'captions sent');
+  const body = call.body.toString('utf8');
+  assert.ok(body.includes('"videoId":"vid1"') && body.includes('"language":"en"') && body.includes('Hello') && body.includes('"isDraft":false'));
+  assert.ok(lines.includes('captions added (en)'));
+  assert.ok(JSON.parse(fs.readFileSync(path.join(d, 'out', 'youtube-published.json'), 'utf8')).captions.en);
+  // youtube captions <folder>: unchanged, skipped; changed, sent again with a note about the older track
+  const c = cred(yt.SCOPES.join(' '));
+  f = fakeYouTube(); lines = [];
+  await yt.captions(d, { fetchImpl: f.fetchImpl, credDir: c, log: (x) => lines.push(x) });
+  assert.ok(!f.calls.some((x) => x.url.includes('captions')) && lines.some((x) => /already added unchanged/.test(x)));
+  fs.appendFileSync(path.join(d, 'out', 'captions.en.srt'), '\n2\n00:00:01,000 --> 00:00:02,000\nAgain\n');
+  f = fakeYouTube(); lines = [];
+  await yt.captions(d, { fetchImpl: f.fetchImpl, credDir: c, log: (x) => lines.push(x) });
+  assert.ok(f.calls.some((x) => x.url.includes('captions')) && lines.some((x) => /second track/.test(x)));
+  // an upload-only sign-in: a note, no request
+  d = withCaptions(); f = fakeYouTube(); lines = [];
+  await yt.upload(d, { yes: true, fetchImpl: f.fetchImpl, credDir: cred(yt.UPLOAD_SCOPE), log: (x) => lines.push(x) });
+  assert.ok(!f.calls.some((x) => x.url.includes('captions')) && lines.some((x) => /only allows uploads/.test(x)));
+  // a video that went to the wrong channel gets no captions
+  const pub = path.join(d, 'out', 'youtube-published.json');
+  fs.writeFileSync(pub, JSON.stringify({ ...JSON.parse(fs.readFileSync(pub, 'utf8')), wrong_channel: true, channel_id: 'UCx' }));
+  await assert.rejects(yt.captions(d, { fetchImpl: fakeYouTube().fetchImpl, credDir: c, log: () => {} }), /wrong channel/);
+  await assert.rejects(yt.captions(fakeFolder(), { fetchImpl: fakeYouTube().fetchImpl, credDir: c, log: () => {} }), /not been uploaded/);
+});
+
+await test('youtube login asks for upload and management by default, upload only with --upload-only, and saves what Google gave', async () => {
+  const run = async (scopes, granted) => {
+    const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'cid', client_secret: 'secret-xyz' }));
+    let asked = null; const lines = [];
+    const open = (url) => { const u = new URL(url); asked = u.searchParams.get('scope'); fetch(`${u.searchParams.get('redirect_uri')}?state=${u.searchParams.get('state')}&code=c1`).catch(() => {}); };
+    const fetchImpl = async () => new Response(JSON.stringify({ refresh_token: 'rt', scope: granted }), { status: 200 });
+    const r = await yt.login({ dir: c, reelDir: tmp(), open, fetchImpl, log: (x) => lines.push(x), timeoutMs: 5000, ...(scopes ? { scopes } : {}) });
+    return { asked, saved: JSON.parse(fs.readFileSync(path.join(c, 'youtube-default.json'), 'utf8')), lines: lines.join('\n'), r };
+  };
+  let x = await run(null, yt.SCOPES.join(' '));
+  assert.equal(x.asked, yt.SCOPES.join(' '));
+  assert.ok(yt.canManage(x.saved) && /stays on this computer/.test(x.lines) && /manage this channel/.test(x.lines) && !x.lines.includes('secret-xyz'));
+  x = await run([yt.UPLOAD_SCOPE], yt.UPLOAD_SCOPE);
+  assert.equal(x.asked, yt.UPLOAD_SCOPE); assert.equal(yt.canManage(x.saved), false);
+  x = await run(null, yt.UPLOAD_SCOPE);
+  assert.match(x.lines, /a box was left unticked/);
+  assert.equal(yt.noBrowser({ BAGELUNIT_NO_BROWSER: '1' }), true);
+  assert.equal(yt.noBrowser({ BAGELUNIT_NO_BROWSER: '0' }), false);
+  assert.equal(yt.noBrowser({}), false);
+  const r = tmp(); fs.writeFileSync(path.join(r, 'youtube-x.json'), JSON.stringify({ client_id: 'cid', client_secret: 'cs', refresh_token: 'rt', scope: yt.SCOPES.join(' ') }));
+  assert.equal(yt.canManage(yt.readCredentials('x', { dir: tmp(), reelDir: r }).cfg), true, 'a borrowed Reel Kit sign-in keeps its scope');
+});
+
+const R = await import('../studio/tools/review.mjs');
+const channel = () => {
+  const ch = tmp(); fs.mkdirSync(path.join(ch, 'brand')); fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ name: 'Space Facts', slug: 'space' }));
+  const v = (name, extra) => { const d = path.join(ch, 'videos', name); fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: name })); for (const [f, b] of Object.entries(extra)) fs.writeFileSync(path.join(d, 'out', f), b); };
+  v('moon', { 'youtube-published.json': JSON.stringify({ id: 'AAAAAAAAAA1', at: '2026-10-01T10:00:00Z' }) });
+  v('mars', { 'youtube.txt': 'Why Mars is red, really\n\nText.' });
+  return ch;
+};
+const CSV = `Content,Video title,Video publish time,Duration,Views,Watch time (hours),Impressions,Impressions click-through rate (%),Average view duration,Average percentage viewed (%)
+Total,,,,9100,410.5,120000,4.6,0:03:40,41.2
+AAAAAAAAAA1,"How big is the Moon, really?","Oct 1, 2026",600,5000,250.2,50000,7.1,0:04:30,45.0
+BBBBBBBBBB2,"Why Mars is red, really","Oct 20, 2026",480,2500,100.1,40000,4.0,0:03:10,39.5
+CCCCCCCCCC3,Saturn's rings in 8 minutes,"Nov 10, 2026",900,900,40.0,20000,2.9,0:02:00,13.3
+DDDDDDDDDD4,The coldest place,"Sep 5, 2026",420,700,20.2,10000,4.5,0:03:30,50.0
+`;
+
+await test('review: no export means no review, only what to download; a zip or a daily chart is refused', () => {
+  const ch = channel();
+  assert.throws(() => R.review(ch, [], { log: () => {} }), (e) => e.howTo && /Advanced mode/.test(e.message) && /Table data\.csv/.test(e.message));
+  assert.ok(!fs.existsSync(path.join(ch, 'reviews')), 'nothing written');
+  const z = path.join(tmp(), 'export.zip'); fs.writeFileSync(z, 'PK');
+  assert.throws(() => R.review(ch, [z], { log: () => {} }), /unzip it first/);
+  const chart = path.join(tmp(), 'Chart data.csv'); fs.writeFileSync(chart, 'Date,Content,Views\n2026-11-01,AAAAAAAAAA1,10\n');
+  assert.throws(() => R.review(ch, [chart], { log: () => {} }), (e) => e.howTo && /day-by-day/.test(e.message));
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'review', ch], { encoding: 'utf8' });
+  assert.equal(r.status, 1); assert.match(r.stderr, /never guesses numbers/);
+});
+
+await test('review: real numbers only, matched to video folders, observations apart from hypotheses, small and young samples flagged, at most 5 tests', () => {
+  const ch = channel(), f = path.join(tmp(), 'Table data.csv'); fs.writeFileSync(f, CSV);
+  const r = R.review(ch, [f], { today: new Date('2026-11-13T12:00:00Z'), log: () => {} });
+  assert.equal(path.relative(ch, r.file), path.join('reviews', '2026-11-13.md'));
+  const md = fs.readFileSync(r.file, 'utf8');
+  assert.equal(r.videos.length, 4, 'the Total row is not a video');
+  assert.equal(r.videos.find((v) => v.id === 'AAAAAAAAAA1').folder, 'moon', 'matched by YouTube id');
+  assert.equal(r.videos.find((v) => v.id === 'BBBBBBBBBB2').folder, 'mars', 'matched by title');
+  assert.ok(/Small sample: 4 videos/.test(md) && /Saturn's rings in 8 minutes", 3 days/.test(md));
+  assert.ok(md.indexOf('## Observations') < md.indexOf('## Hypotheses') && md.indexOf('## Hypotheses') < md.indexOf('## Tests'));
+  const obs = md.slice(md.indexOf('## Observations'), md.indexOf('## Hypotheses'));
+  assert.ok(obs.includes('impressions CTR 4.3% (4 videos)') && obs.includes('"How big is the Moon, really?" (videos/moon) 7.1%'), obs);
+  assert.ok(obs.includes('5,000 views, 55% of all 9,100 views'));
+  assert.ok(r.tests.length >= 1 && r.tests.length <= 5);
+  assert.ok(md.includes('Title.') && md.includes('Thumbnail.') && md.includes('Hook.'));
+  // every number in the observations is one of the file's, or a median/share of them
+  const fileNums = new Set(CSV.match(/\d+(\.\d+)?/g));
+  for (const n of ['7.1', '2.9', '5,000', '13.3']) assert.ok(obs.includes(n) && fileNums.has(n.replace(',', '')), n);
+  // a second review the same day never overwrites the first; the dashboard links the newest
+  const r2 = R.review(ch, [f], { today: new Date('2026-11-13T15:00:00Z'), log: () => {} });
+  assert.equal(path.basename(r2.file), '2026-11-13-2.md');
+  assert.equal(path.basename(R.latestReview(ch).file), '2026-11-13-2.md');
+  assert.match(R.latestReview(ch).headline, /^4 videos, median CTR 4\.3%/);
+});
+
+await test('review: column names that differ and columns that are missing are said, never filled in; retention files read', async () => {
+  const rows = R.readExport((() => { const f = path.join(tmp(), 't.csv'); fs.writeFileSync(f, 'Video,Title,Views,CTR\nAAAAAAAAAA1,One,"1,200",5.5%\n'); return f; })());
+  assert.equal(rows.videos[0].views, 1200); assert.equal(rows.videos[0].ctr, 5.5);
+  assert.ok(rows.missing.includes('Average percentage viewed (%)') && rows.missing.includes('Impressions'));
+  const ret = path.join(tmp(), 'Moon retention.csv');
+  fs.writeFileSync(ret, 'Video position (%),Absolute audience retention (%)\n0,100\n5,62\n10,58\n50,40\n100,20\n');
+  const ch = channel(), t = path.join(tmp(), 'Table data.csv'); fs.writeFileSync(t, 'Video,Title,Views,CTR\nAAAAAAAAAA1,One,"1,200",5.5%\n');
+  const r = R.review(ch, [t, ret], { today: new Date('2026-11-13T12:00:00Z'), log: () => {} });
+  const md = fs.readFileSync(r.file, 'utf8');
+  assert.match(md, /Missing from the export: .*Average percentage viewed/);
+  assert.match(md, /Retention file "Moon retention": 58% still watching at 10%; the largest fall is 38 points, from 0% to 5%/);
+  assert.ok(md.includes('largest fall comes in the opening'));
+  const { load } = await import('../studio/dashboard/model.mjs');
+  const { html } = await import('../studio/dashboard/page.mjs');
+  fs.mkdirSync(path.join(ch, 'videos'), { recursive: true });
+  const page = html(load(path.join(ch, 'videos'), { pageDir: path.join(ch, 'videos') }));
+  assert.ok(page.includes('href="../reviews/2026-11-13.md"') && page.includes('Channel review 2026-11-13'));
 });
 
 console.log(n ? `\n${n} test(s) passed` : '');

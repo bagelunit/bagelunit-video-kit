@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 // youtube.mjs · long-form upload to YouTube from this computer. No server: the video is sent straight from out/video.mp4.
 //
-//   node video.mjs youtube login [--slug name]                one-time sign-in in the browser (scope youtube.upload only)
+//   node video.mjs youtube login [--slug name] [--upload-only]   one-time sign-in in the browser: upload and manage the channel
+//                                                             (captions); --upload-only asks for uploading only. BAGELUNIT_NO_BROWSER=1 only
+//                                                             prints the address (to open it in the browser profile of the channel's account)
 //   node video.mjs youtube login --client <downloaded.json> [--all]   installs Google's client file for this channel (--all: every
 //                                                             channel in channels.json), deletes the download, then signs in
 //   node video.mjs youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]
+//   node video.mjs youtube captions <folder>                   add out/captions.<lang>.srt to the uploaded video (needs the full sign-in);
+//                                                             a file already added unchanged is skipped
 //
 // upload is a DRY RUN until --yes: it prints the title, description, privacy, size and every problem, and sends nothing.
+// It needs the final approval of exactly these files, recorded with --watched (the person watched the whole final cut).
+// The description gets the chapters (out/chapters.txt) and, unless it already names them, the sources in research.md.
+// out/pinned-comment.txt is shown but never posted: the person pins it by hand.
 // The default privacy is private, so a first upload can be looked at in YouTube Studio before it goes public.
 //
 // Credentials (never printed, never committed): ~/.config/bagelunit-video/youtube-<slug>.json, {client_id, client_secret,
@@ -27,7 +34,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { approvalCurrent, findBrand } from './checks.mjs';
+import { approvalCurrent, findBrand, sha256File } from './checks.mjs';
 
 export const CONFIG_DIR = process.env.BAGELUNIT_VIDEO_CONFIG || path.join(os.homedir(), '.config', 'bagelunit-video');
 const REEL_CONFIG = path.join(os.homedir(), '.config', 'bagelunit-reels');
@@ -51,6 +58,35 @@ export function parts(text, chapters = '') {
   return { title, description };
 }
 
+// The sources of research.md for the description: its "## Sources" list (or, without one, every link in it), one per line,
+// as many as fit in YouTube's limit. Nothing is added when the description already holds a "Sources" heading or any of the
+// links, or when video.json says "description_sources": false.
+export function researchSources(text) {
+  const all = String(text || '');
+  const sec = all.split(/^##\s+Sources\s*$/im)[1];
+  const body = sec != null ? sec.split(/^##\s/m)[0] : all;
+  const out = [], seen = new Set();
+  for (const m of body.matchAll(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)>\]]+)/g)) {
+    const url = m[2] || m[3];
+    if (!url || seen.has(url) || /^https?:\/\/\.\.\./.test(url) || url === 'https://') continue;
+    seen.add(url);
+    out.push({ title: (m[1] || '').trim(), url });
+  }
+  return out;
+}
+export function withSources(description, sources, { limit = LIMITS.descriptionBytes } = {}) {
+  if (!sources.length) return { description, added: 0, why: 'research.md lists no sources' };
+  if (/^\s*(sources|credits|references)\b/im.test(description) || sources.some((x) => description.includes(x.url))) return { description, added: 0, why: 'the description already has its sources' };
+  let out = `${description.trim()}\n\nSources:`, added = 0;
+  for (const x of sources) {
+    const line = `\n${x.title ? `${x.title.replace(/[<>]/g, '')}: ` : ''}${x.url}`;
+    if (Buffer.byteLength(out + line) > limit) break;
+    out += line; added++;
+  }
+  if (!added) return { description, added: 0, why: 'no room left in the description for the sources' };
+  return { description: out, added, why: added < sources.length ? `${sources.length - added} source(s) did not fit` : '' };
+}
+
 export function problems({ title, description }, { video, thumbnail, standIn, privacy, chapters }) {
   const out = [];
   if (!title) out.push('the title is empty (out/youtube.txt: the title on the first line, the description after it)');
@@ -65,10 +101,26 @@ export function problems({ title, description }, { video, thumbnail, standIn, pr
   return out;
 }
 
-export function metadata({ title, description }, { privacy, categoryId = '27', madeByAi = false }) {
+// tags: YouTube allows 500 characters in all (a tag with a space counts its quotes); publishAt: an ISO time in the future,
+// only with privacy "private" (YouTube then makes the video public at that time); language: e.g. "en" for both the
+// title/description language and the spoken language.
+export const cleanTags = (tags) => (Array.isArray(tags) ? tags.map((t) => String(t).trim()).filter(Boolean) : []);
+export function tagChars(tags) { const c = cleanTags(tags); return c.reduce((n, t) => n + t.length + (/\s/.test(t) ? 2 : 0), 0) + Math.max(0, c.length - 1); }
+export const LANGUAGE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+// publish_at needs its offset ("Z" or "-05:00"): without one the time would be read in this computer's zone, a date alone as UTC
+export function publishTime(value, { privacy, now = Date.now() } = {}) {
+  const v = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(v) || Number.isNaN(new Date(v).getTime())) return { why: `video.json "publish_at" must be a time with its offset, e.g. 2026-11-17T18:00:00-05:00 (it is ${JSON.stringify(value)})` };
+  const when = new Date(v);
+  if (when.getTime() < now + 15 * 60e3) return { why: `video.json "publish_at" (${v}) must be at least 15 minutes from now` };
+  if (privacy !== 'private') return { why: `a scheduled video uploads as private, then YouTube publishes it at "publish_at"; privacy is "${privacy}" (upload with --privacy private)` };
+  return { at: when.toISOString() };
+}
+export function metadata({ title, description }, { privacy, categoryId = '27', madeByAi = false, tags = null, publishAt = null, language = null }) {
+  const clean = cleanTags(tags);
   return {
-    snippet: { title, description, categoryId: String(categoryId) },
-    status: { privacyStatus: privacy, selfDeclaredMadeForKids: false, ...(madeByAi ? { containsSyntheticMedia: true } : {}) },
+    snippet: { title, description, categoryId: String(categoryId), ...(clean.length ? { tags: clean } : {}), ...(language ? { defaultLanguage: language, defaultAudioLanguage: language } : {}) },
+    status: { privacyStatus: privacy, selfDeclaredMadeForKids: false, ...(publishAt ? { publishAt } : {}), ...(madeByAi ? { containsSyntheticMedia: true } : {}) },
   };
 }
 
@@ -81,7 +133,7 @@ export function readCredentials(slug, { dir = CONFIG_DIR, reelDir = REEL_CONFIG 
   if (!cfg) {
     const borrowed = readJSON(path.join(reelDir, `youtube-${slug}.json`), null);
     if (borrowed && !isPlaceholder(borrowed.client_id) && !isPlaceholder(borrowed.client_secret))
-      cfg = { client_id: borrowed.client_id, client_secret: borrowed.client_secret, ...(borrowed.refresh_token ? { refresh_token: borrowed.refresh_token } : {}) };
+      cfg = { client_id: borrowed.client_id, client_secret: borrowed.client_secret, ...(borrowed.refresh_token ? { refresh_token: borrowed.refresh_token, ...(borrowed.scope ? { scope: borrowed.scope } : {}) } : {}) };
   }
   if (!cfg) {
     writePrivate(file, { client_id: 'PASTE-CLIENT-ID-HERE', client_secret: 'PASTE-CLIENT-SECRET-HERE' });
@@ -128,9 +180,19 @@ export function registeredSlugs(registry = path.join(CONFIG_DIR, 'channels.json'
   return [...new Set(out)];
 }
 
-const openBrowser = (url) => {
+// The sign-in asks for upload plus channel management (youtube.force-ssl) by default: captions, and later playlists and video
+// edits, need the second. `login --upload-only` asks for the first alone (captions are then skipped with a note), as does a
+// sign-in made before this kit asked for both.
+export const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+export const MANAGE_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+export const SCOPES = [UPLOAD_SCOPE, MANAGE_SCOPE];
+export const canManage = (cfg) => String(cfg?.scope || '').split(/\s+/).includes(MANAGE_SCOPE);
+export const noBrowser = (env = process.env) => Boolean(env.BAGELUNIT_NO_BROWSER) && !/^(0|false|no)$/i.test(String(env.BAGELUNIT_NO_BROWSER).trim());
+export const openBrowser = (url) => {
+  if (noBrowser()) return false;                              // the caller opens the printed address in a browser of its choice
   const [cmd, args] = process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url.replace(/&/g, '^&')]] : ['xdg-open', [url]];
   try { spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref(); } catch {}
+  return true;
 };
 
 export function waitForCode({ state, timeoutMs = 5 * 60 * 1000, onListening }) {
@@ -151,7 +213,7 @@ export function waitForCode({ state, timeoutMs = 5 * 60 * 1000, onListening }) {
   });
 }
 
-export async function login({ slug = 'default', dir = CONFIG_DIR, reelDir = REEL_CONFIG, fetchImpl = fetch, open = openBrowser, log = console.log, timeoutMs } = {}) {
+export async function login({ slug = 'default', dir = CONFIG_DIR, reelDir = REEL_CONFIG, fetchImpl = fetch, open = openBrowser, log = console.log, timeoutMs, scopes = SCOPES } = {}) {
   const { file, cfg } = readCredentials(slug, { dir, reelDir });
   const verifier = randomBytes(48).toString('base64url'), state = randomBytes(16).toString('hex');
   let redirect = '';
@@ -159,10 +221,11 @@ export async function login({ slug = 'default', dir = CONFIG_DIR, reelDir = REEL
     state, timeoutMs,
     onListening: (port) => {
       redirect = `http://127.0.0.1:${port}/`;
-      const q = new URLSearchParams({ client_id: cfg.client_id, redirect_uri: redirect, response_type: 'code', scope: 'https://www.googleapis.com/auth/youtube.upload', state,
+      const q = new URLSearchParams({ client_id: cfg.client_id, redirect_uri: redirect, response_type: 'code', scope: scopes.join(' '), state,
         code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', access_type: 'offline', prompt: 'consent' });
       const url = `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
-      log(`Opening the YouTube sign-in page. Sign in with the channel's Google account and choose Allow. If no page opens, open this address yourself:\n${url}`);
+      const asks = scopes.includes(MANAGE_SCOPE) ? 'to upload videos to this channel and manage them (captions now; this permission could also edit or delete its videos)' : 'to upload videos to this channel (uploads only: no captions)';
+      log(`${noBrowser() ? 'Open this address in the browser signed in to the channel\'s Google account' : 'Opening the YouTube sign-in page. If no page opens, open this address yourself'}. Sign in with the channel's Google account and choose Allow; it asks ${asks}:\n${url}`);
       open(url);
     },
   });
@@ -174,9 +237,12 @@ export async function login({ slug = 'default', dir = CONFIG_DIR, reelDir = REEL
   } catch (e) { throw new Plain(`could not reach Google to finish the sign-in (${e?.cause?.code || e?.name || 'network error'})`); }
   const hide = (s) => [cfg.client_secret, code, verifier].reduce((t, x) => (x ? String(t).split(String(x)).join('***') : t), String(s));
   if (!res.ok || !data.refresh_token) throw new Plain(`Google did not finish the sign-in: ${hide(data.error_description || (typeof data.error === 'string' ? data.error : data.error?.message) || 'no refresh token came back')}`);
-  writePrivate(file, { client_id: cfg.client_id, client_secret: cfg.client_secret, refresh_token: data.refresh_token, scope: data.scope || 'https://www.googleapis.com/auth/youtube.upload', signed_in_at: new Date().toISOString() });
-  log(`Signed in. The refresh token is saved in ${file} (readable by you only; it is never printed).`);
-  return { file };
+  const scope = data.scope || scopes.join(' ');
+  writePrivate(file, { client_id: cfg.client_id, client_secret: cfg.client_secret, refresh_token: data.refresh_token, scope, signed_in_at: new Date().toISOString() });
+  const full = canManage({ scope });
+  log(`Signed in. The refresh token is saved in ${file}, readable by you only, never printed, and it stays on this computer. ${full ? 'It can upload to and manage this channel: keep this computer\'s account to yourself.' : 'It can upload only, so captions are skipped.'}`);
+  if (!full && scopes.includes(MANAGE_SCOPE)) log('Google gave upload permission only (a box was left unticked). For captions, run  node video.mjs youtube login  again and tick both boxes.');
+  return { file, scope };
 }
 
 async function accessToken(cfg, fetchImpl) {
@@ -228,6 +294,65 @@ async function setThumbnail(token, id, file, fetchImpl) {
   return res.ok ? null : `the thumbnail was not set (HTTP ${res.status}; custom thumbnails need a verified channel). Set it in YouTube Studio: out/thumbnail.jpg`;
 }
 
+// Captions: every out/captions.<language>.srt (e.g. captions.en.srt) goes to the video as a published track.
+export function captionFiles(dir) {
+  const out = path.join(dir, 'out');
+  return fs.existsSync(out) ? fs.readdirSync(out).filter((f) => /^captions\.[a-zA-Z-]{2,10}\.srt$/.test(f)).map((f) => ({ file: path.join(out, f), language: f.split('.')[1] })) : [];
+}
+async function insertCaption(token, videoId, { file, language }, fetchImpl) {
+  const boundary = `bagelunit${randomBytes(8).toString('hex')}`;
+  const meta = JSON.stringify({ snippet: { videoId, language, name: language === 'en' ? 'English' : language, isDraft: false } });
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
+    fs.readFileSync(file), Buffer.from(`\r\n--${boundary}--\r\n`)]);
+  const res = await fetchImpl('https://www.googleapis.com/upload/youtube/v3/captions?uploadType=multipart&part=snippet', { method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` }, body });
+  if (res.ok) return null;
+  const b = await res.json().catch(() => ({}));
+  return `the ${language} captions were not added (${String(b?.error?.errors?.[0]?.reason || b?.error?.message || res.status).slice(0, 120)}). Add ${path.basename(file)} in YouTube Studio, Subtitles`;
+}
+// a caption file made by `video captions` from an older word clock (the voice changed since) is out of date
+export function staleCaptions(dir) {
+  const rec = readJSON(path.join(dir, 'build', 'captions.json'), {}) || {};
+  const words = sha256File(path.join(dir, 'build', 'words.json'));
+  return captionFiles(dir).filter((f) => rec[f.language] && rec[f.language].words !== words)
+    .map((f) => `out/captions.${f.language}.srt was made before the voice last changed: run  node video.mjs captions <folder>  again`);
+}
+const fileSha = (f) => createHash('sha256').update(fs.readFileSync(f)).digest('hex').slice(0, 16);
+// sends each caption file not yet added as it is now; what was sent is kept in out/youtube-published.json "captions"
+async function sendCaptions(dir, token, cfg, videoId, fetchImpl, log) {
+  const files = captionFiles(dir);
+  if (!files.length) return {};
+  if (!canManage(cfg)) { log('captions not sent: this sign-in only allows uploads. Sign in again (node video.mjs youtube login, without --upload-only) to allow captions, then run  node video.mjs youtube captions <folder>'); return {}; }
+  const pubFile = path.join(dir, 'out', 'youtube-published.json');
+  const sent = { ...(readJSON(pubFile, {})?.captions || {}) };
+  for (const f of files) {
+    const h = fileSha(f.file);
+    if (sent[f.language] === h) { log(`captions (${f.language}) already added unchanged; skipped`); continue; }
+    const again = Boolean(sent[f.language]);
+    const w = await insertCaption(token, videoId, f, fetchImpl);
+    if (w) { log(w); continue; }
+    sent[f.language] = h;
+    log(`captions added (${f.language})${again ? '. This is a second track in that language: delete the older one in YouTube Studio, Subtitles' : ''}`);
+  }
+  const pub = readJSON(pubFile, null);
+  if (pub) fs.writeFileSync(pubFile, JSON.stringify({ ...pub, captions: sent }, null, 2) + '\n');
+  return sent;
+}
+export async function captions(dir, { slug, fetchImpl = fetch, log = console.log, credDir = CONFIG_DIR, reelDir = REEL_CONFIG } = {}) {
+  const published = readJSON(path.join(dir, 'out', 'youtube-published.json'), null);
+  if (!published?.id) throw new Plain('this video has not been uploaded yet (no out/youtube-published.json)');
+  if (published.wrong_channel) throw new Plain(`this upload went to the wrong channel (${published.channel_id}): delete it there and upload again before adding captions`);
+  if (!captionFiles(dir).length) throw new Plain('no out/captions.<lang>.srt to add: make it with  node video.mjs captions <folder>');
+  const stale = staleCaptions(dir);
+  if (stale.length) throw new Plain(`not sent:\n  ${stale.join('\n  ')}`);
+  const cfgV = readJSON(path.join(dir, 'video.json'), null) || {};
+  const brand = findBrand(dir);
+  slug = slug || cfgV.channel || brand?.cfg.slug || 'default';
+  const { cfg } = readCredentials(slug, { dir: credDir, reelDir });
+  await sendCaptions(dir, await accessToken(cfg, fetchImpl), cfg, published.id, fetchImpl, log);
+}
+
 export async function upload(dir, { privacy, yes = false, again = false, thumb = true, slug, fetchImpl = fetch, log = console.log, credDir = CONFIG_DIR, reelDir = REEL_CONFIG } = {}) {
   const cfgV = readJSON(path.join(dir, 'video.json'), null) || {};
   // the channel folder this video sits in names the sign-in (one per channel) and may set a calmer default privacy
@@ -239,6 +364,10 @@ export async function upload(dir, { privacy, yes = false, again = false, thumb =
   const txt = path.join(dir, 'out', 'youtube.txt'), chaptersFile = path.join(dir, 'out', 'chapters.txt');
   const text = fs.existsSync(txt) ? fs.readFileSync(txt, 'utf8') : cfgV.title ? `${cfgV.title}\n` : '';
   const t = parts(text, fs.existsSync(chaptersFile) ? fs.readFileSync(chaptersFile, 'utf8') : '');
+  const src = cfgV.description_sources === false ? { added: 0, why: 'off in video.json' } : withSources(t.description, researchSources(fs.existsSync(path.join(dir, 'research.md')) ? fs.readFileSync(path.join(dir, 'research.md'), 'utf8') : ''));
+  if (src.added) t.description = src.description;
+  const pinnedFile = path.join(dir, 'out', 'pinned-comment.txt');
+  const pinned = fs.existsSync(pinnedFile) ? fs.readFileSync(pinnedFile, 'utf8').trim() : '';
   const note = readJSON(path.join(dir, 'build', 'voice-stand-in.json'), null), vo = path.join(dir, 'audio', 'vo.mp3');
   const standIn = Boolean(note && fs.existsSync(vo) && note.sha === createHash('sha256').update(fs.readFileSync(vo)).digest('hex'));
   const size = fs.existsSync(mp4) ? fs.statSync(mp4).size : 0;
@@ -246,11 +375,25 @@ export async function upload(dir, { privacy, yes = false, again = false, thumb =
   const issues = problems(t, { video: size > 0, thumbnail: withThumb ? fs.statSync(jpg) : null, standIn, privacy });
   const approved = approvalCurrent(dir, 'final');
   if (!approved.ok) issues.push(approved.why);
+  else if (!approved.watched) issues.push('the final approval does not say the person watched the whole final cut: once they have, record it with  node video.mjs approve <folder> final --watched');
+  if (pinned.length > 10000) issues.push(`out/pinned-comment.txt is ${pinned.length} characters; a YouTube comment takes 10,000`);
+  issues.push(...staleCaptions(dir));
   const published = readJSON(path.join(dir, 'out', 'youtube-published.json'), null);
   if (published && !again) issues.push(`already uploaded: ${published.url}. A second upload needs --again`);
-  const meta = metadata(t, { privacy, categoryId: cfgV.category_id, madeByAi: Boolean(cfgV.ai_generated) });
+  // scheduled publishing: video.json "publish_at" (ISO time with its offset, e.g. "2026-11-17T18:00:00-05:00"); the upload
+  // stays private and YouTube publishes it then. Setting it is the owner's say-so, like any change of privacy.
+  let publishAt = null;
+  if (cfgV.publish_at) { const p = publishTime(cfgV.publish_at, { privacy }); if (p.why) issues.push(p.why); else publishAt = p.at; }
+  if (cfgV.tags != null && !Array.isArray(cfgV.tags)) issues.push('video.json "tags" must be a list, e.g. ["volcanoes", "how volcanoes form"]');
+  const tags = Array.isArray(cfgV.tags) ? cleanTags(cfgV.tags) : null;
+  if (tags && tagChars(tags) > 500) issues.push(`the tags are ${tagChars(tags)} characters; YouTube allows 500`);
+  if (tags && tags.some((x) => /[<>]/.test(x))) issues.push('a tag cannot contain < or >');
+  const language = String(cfgV.language || brand?.cfg.youtube?.language || '').trim() || null;
+  if (language && !LANGUAGE.test(language)) issues.push(`the language "${language}" is not a language code like en, es or pt-BR (video.json "language" or brand.json youtube.language)`);
+  const meta = metadata(t, { privacy, categoryId: cfgV.category_id, madeByAi: Boolean(cfgV.ai_generated), tags, publishAt, language });
   const chapterLines = fs.existsSync(chaptersFile) ? fs.readFileSync(chaptersFile, 'utf8').trim().split('\n').filter(Boolean).length : 0;
-  log(`YouTube upload ${yes ? '' : '(dry run: nothing is sent)'}\n  title:       ${t.title}\n  privacy:     ${privacy}\n  video:       out/video.mp4 (${(size / 1048576).toFixed(1)} MB)\n  thumbnail:   ${withThumb ? 'out/thumbnail.jpg' : 'none (YouTube picks a frame)'}\n  chapters:    ${chapterLines}\n  description: ${Buffer.byteLength(t.description)} bytes`);
+  const caps = captionFiles(dir).map((f) => f.language);
+  log(`YouTube upload ${yes ? '' : '(dry run: nothing is sent)'}\n  title:       ${t.title}\n  privacy:     ${privacy}${publishAt ? ` (scheduled: YouTube publishes it ${publishAt})` : ''}\n  tags:        ${tags ? tags.length : 0}${language ? `\n  language:    ${language}` : ''}\n  video:       out/video.mp4 (${(size / 1048576).toFixed(1)} MB)\n  thumbnail:   ${withThumb ? 'out/thumbnail.jpg' : 'none (YouTube picks a frame)'}\n  chapters:    ${chapterLines}\n  sources:     ${src.added ? `${src.added} added from research.md${src.why ? ` (${src.why})` : ''}` : `none added (${src.why})`}\n  captions:    ${caps.length ? caps.join(', ') : 'none (node video.mjs captions <folder> makes them)'}\n  description: ${Buffer.byteLength(t.description)} bytes\n  watched:     ${approved.ok ? (approved.watched ? 'yes, the whole final cut (recorded with the approval)' : 'NOT recorded') : 'no final approval yet'}\n  pinned:      ${pinned ? `out/pinned-comment.txt (${pinned.length} characters; not posted by the upload: pin it by hand)\n${pinned.split('\n').map((l) => `               ${l}`).join('\n')}` : 'none (out/pinned-comment.txt)'}`);
   if (issues.length) throw new Plain(`not sent:\n  ${issues.join('\n  ')}`);
   if (!yes) { log('\nAll checks passed. Run again with --yes to upload.'); return { dryRun: true, meta }; }
 
@@ -289,6 +432,8 @@ export async function upload(dir, { privacy, yes = false, again = false, thumb =
   }
   if (channelId && !expected) log(`channel: ${channelId}. Check in YouTube Studio that the video is on the right channel, then save this as youtube.channel_id in brand/brand.json: later uploads are checked against it.`);
   if (withThumb) { const w = await setThumbnail(token, resource.id, jpg, fetchImpl); log(w || 'thumbnail set'); }
+  await sendCaptions(dir, token, cfg, resource.id, fetchImpl, log);
+  if (pinned) log(`pin the comment by hand: open ${url} (or YouTube Studio, Comments), post the text of out/pinned-comment.txt as the channel, then "Pin" in its menu. The upload never posts comments.`);
   return { id: resource.id, url, channelId, wrongChannel };
 }
 
@@ -308,8 +453,12 @@ export async function cli(argv) {
         console.log(`client file installed for ${done.length} channel(s): ${done.map((d) => d.slug + (d.signedIn ? ' (already signed in)' : '')).join(', ')}. Readable by you only; nothing was printed${done.removed ? '; the downloaded copy was deleted' : ''}.`);
         if (!here.length) { console.log('Now sign in each channel from its own folder: node video.mjs youtube login'); return done; }
       }
-      console.log(`signing in for the channel "${slug}"${b ? ` (${b.cfg.name || path.basename(b.dir)})` : ''}`);
-      return await login({ slug });
+      console.log(`signing in for the channel "${slug}"${b ? ` (${b.cfg.name || path.basename(b.dir)})` : ''}${flags['upload-only'] ? ', uploads only' : ''}`);
+      return await login({ slug, scopes: flags['upload-only'] ? [UPLOAD_SCOPE] : SCOPES });
+    }
+    if (loose[0] === 'captions') {
+      if (!loose[1]) throw new Plain('give the video folder: node video.mjs youtube captions <folder>');
+      return await captions(path.resolve(loose[1]), { slug: typeof flags.slug === 'string' ? flags.slug : undefined });
     }
     if (loose[0] === 'upload') {
       if (!loose[1]) throw new Plain('give the video folder: node video.mjs youtube upload <folder>');
@@ -317,6 +466,6 @@ export async function cli(argv) {
       if (r?.wrongChannel) process.exitCode = 1;
       return r;
     }
-    throw new Plain('usage: node video.mjs youtube login [--client <downloaded.json> [--all]]  |  youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]');
+    throw new Plain('usage: node video.mjs youtube login [--client <downloaded.json> [--all]] [--upload-only]  |  youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]  |  youtube captions <folder>');
   } catch (e) { console.error(e instanceof Plain ? e.message : `Unexpected error: ${e?.message || e}`); process.exitCode = 1; }
 }

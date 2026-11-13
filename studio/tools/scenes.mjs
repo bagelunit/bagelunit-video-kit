@@ -30,7 +30,7 @@ const W = 1920, H = 1080, FPS = 30;
 const SAFE = { top: 54, bottom: 54, side: 96 };         // title-safe: 5% of the picture on every side (long-form video has no app buttons over it)
 const SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
 const TOL = 6;                                          // px of slack on the safe area, as in the styles repo's tester
-const RENDER_VERSION = 'scenes-1';                      // change it when the frame loop or the codec settings change
+const RENDER_VERSION = 'scenes-2';                      // change it when the frame loop or the codec settings change
 const MIN_SCENE = 0.5;                                  // s; a scene shorter than this is squeezed out of its neighbours
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
@@ -107,20 +107,23 @@ export function planOf(dir, style) {
     const allowed = Object.keys(def?.propsSchema?.properties || {});
     const extra = allowed.length ? Object.keys(s.props || {}).filter((p) => !allowed.includes(p)) : [];
     if (extra.length) notes.push(`scene ${k + 1} (${s.template}): props the template does not know, ignored by the engine: ${extra.join(', ')}`);
-    if (!String(s.narration || '').trim()) notes.push(`scene ${k + 1}: no "narration", so its time can only be guessed (even split)`);
+    let pause = 0;
+    if (s.pause != null && s.pause !== 0) {
+      pause = Number(s.pause);
+      if (!Number.isFinite(pause) || pause < 0 || pause > 60) throw new Error(`scene ${k + 1}: "pause" must be a number of seconds from 0 to 60 (it is ${JSON.stringify(s.pause)})`);
+      pause = Math.round(pause * FPS) / FPS;                    // on a frame, so the scenes after it move by whole frames
+    }
+    if (!String(s.narration || '').trim() && !pause) notes.push(`scene ${k + 1}: no "narration", so its time can only be guessed (even split)`);
     return { n: k + 1, file: pad(k + 1), id: String(s.id || `${String(k + 1).padStart(2, '0')}-${s.template || 'custom'}`),
-      chapter: s.chapter ? String(s.chapter).trim() : null, template: s.template || null, code: s.code || null, props: s.props || {}, narration: String(s.narration || ''), seed: s.seed };
+      chapter: s.chapter ? String(s.chapter).trim() : null, template: s.template || null, code: s.code || null, props: s.props || {}, narration: String(s.narration || ''), seed: s.seed,
+      ...(pause ? { pause } : {}), ...(s.sfx != null ? { sfx: s.sfx } : {}) };
   });
   return { scenes, notes };
 }
 
-// Each scene's [t0, t1] on the video's clock. The narration of every scene is aligned with build/words.json (longest common
-// subsequence of the folded words); a scene with at least half its words found is anchored to them, and the cut between two
-// scenes falls in the middle of the gap between the last word of one and the first word of the next. Scenes that cannot be
-// anchored (no words.json yet, or narration that is not in the voice) share the time between their neighbours evenly.
-// Every cut is put on a frame, so the scene lengths add up to the video exactly.
-export function timeScenes(scenes, words, { voLength = null, tail = 0.6, fallbackLength = null } = {}) {
-  const N = scenes.length;
+// The narration of every scene lined up with build/words.json (longest common subsequence of the folded words): each scene's
+// first and last word found, how many were found, and whether that is enough (half its words) to anchor it.
+export function alignScenes(scenes, words) {
   const A = [];                                                  // [token, scene index]
   scenes.forEach((s, k) => tokens(s.narration).forEach((t) => A.push([t, k])));
   const B = (words || []).map((w) => normWord(w.w));
@@ -139,8 +142,22 @@ export function timeScenes(scenes, words, { voLength = null, tail = 0.6, fallbac
   }
   const counts = scenes.map((s) => tokens(s.narration).length);
   const anchored = span.map((sp, k) => counts[k] > 0 && sp.hits >= Math.max(1, Math.ceil(counts[k] * 0.5)));
+  return { span, counts, anchored };
+}
+
+// Each scene's [t0, t1] on the video's clock. A scene anchored to its words (alignScenes) starts and ends at them, and the
+// cut between two scenes falls in the middle of the gap between the last word of one and the first word of the next. Scenes
+// that cannot be anchored (no words.json yet, or narration that is not in the voice) share the time between their neighbours
+// evenly. A scene with a "pause" starts where its silence starts (pauses: build/pauses.json), so the silence is its own.
+// endCard: seconds the video runs on after the voice (video.json "end_card"). Every cut is put on a frame, so the scene
+// lengths add up to the video exactly.
+export function timeScenes(scenes, words, { voLength = null, tail = 0.6, fallbackLength = null, pauses = [], endCard = 0 } = {}) {
+  const N = scenes.length;
+  const m = (words || []).length;
+  const { span, counts, anchored } = alignScenes(scenes, words);
+  const n = counts.reduce((x, y) => x + y, 0);
   const lastEnd = m ? words[m - 1].e : 0;
-  const end = m ? Math.max(voLength || 0, lastEnd + tail) : (voLength || fallbackLength || Math.max(3, n * 0.42 + 1));
+  const end = (m ? Math.max(voLength || 0, lastEnd + tail) : (voLength || fallbackLength || Math.max(3, n * 0.42 + 1))) + Math.max(0, Number(endCard) || 0);
 
   const bnd = new Array(N + 1).fill(null);
   bnd[0] = 0; bnd[N] = end;
@@ -150,6 +167,7 @@ export function timeScenes(scenes, words, { voLength = null, tail = 0.6, fallbac
     else if (next != null) bnd[k] = Math.max(0, next - 0.15);
     else if (prev != null) bnd[k] = prev + 0.15;
   }
+  for (const p of pauses || []) if (p.n - 1 >= 1 && p.n - 1 < N && Number.isFinite(p.at)) bnd[p.n - 1] = Math.min(Math.max(0, p.at), end);
   // unknown cuts: even split between the known ones around them
   for (let k = 1; k < N; k++) {
     if (bnd[k] != null) continue;
@@ -169,6 +187,65 @@ export function timeScenes(scenes, words, { voLength = null, tail = 0.6, fallbac
   }));
 }
 
+/* ── pauses: a silent stretch in the voice for a scene ("pause": seconds in scenes.json) ─────────────────────────────── */
+// A brand intro or an end card needs time with no voice. When the voice is joined (video voice, video stand-in), each scene
+// with a "pause" gets that much silence spliced into audio/vo.mp3 at its place, and the word clock after it moves on by the
+// same amount. The place is just before the scene's first word (for a scene with no narration, before the first word of the
+// next scene that has words; at the very start for an intro, at the very end for an end card): the middle of the gap between
+// that word and the one before it, so the splice falls between words.
+// placePauses: [{n, id, seconds, at}] with "at" on the clock of the voice before any silence goes in.
+export function placePauses(scenes, words, audioLength) {
+  const want = (scenes || []).filter((s) => s.pause > 0);
+  if (!want.length) return [];
+  const W = words || [];
+  const { span, anchored } = alignScenes(scenes, W);
+  return want.map((s) => {
+    const k = s.n - 1;
+    let ni = null;
+    for (let j = k; j < scenes.length; j++) if (anchored[j]) { ni = span[j].a; break; }
+    let at;
+    if (ni == null) at = audioLength;                           // nothing said after it: the end
+    else if (ni === 0) at = 0;                                  // nothing said before it: the start
+    else { const a = W[ni - 1].e, b = W[ni].s; at = b >= a ? (a + b) / 2 : b; }
+    return { n: s.n, id: s.id, seconds: s.pause, at: r3(Math.max(0, Math.min(at, audioLength ?? at))) };
+  });
+}
+
+// The word clock with the silences in. A word that starts at or after a splice moves on by the silence before it; a word
+// that starts before a splice and would end after it (a straddling word) is cut to end at the splice, so it can never take
+// the whole silence as its own length. Returns the words, the splices on the new clock ({n, id, seconds, at, from}: at is
+// where the silence starts in the new voice, from where it went in the old one) and how many words were cut.
+export function applyPauses(words, placed) {
+  const order = [...(placed || [])].sort((x, y) => x.at - y.at || x.n - y.n);
+  let clamped = 0;
+  const out = (words || []).map((w) => {
+    let shift = 0, e = w.e;
+    for (const p of order) {
+      if (w.s >= p.at - 1e-9) shift += p.seconds;
+      else if (e > p.at + 1e-9) { e = p.at; clamped++; break; }
+    }
+    return { w: w.w, s: r3(w.s + shift), e: r3(Math.max(w.s, e) + shift) };
+  });
+  let before = 0;
+  const splices = order.map((p) => { const x = { n: p.n, id: p.id, seconds: p.seconds, at: r3(p.at + before), from: p.at }; before += p.seconds; return x; });
+  return { words: out, splices, clamped, added: before };
+}
+
+export function writePauses(dir, splices) {
+  const f = path.join(dir, 'build', 'pauses.json');
+  if (splices && splices.length) { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify(splices, null, 1) + '\n'); }
+  else fs.rmSync(f, { force: true });
+}
+
+// The last word must end before the audio does: a word clock that runs past it makes captions and cuts late (a re-voiced
+// piece once ran 1.35 s past). Returns a warning, or null.
+export function clockCheck(words, audioLength, where = 'the voice') {
+  const last = (words || []).at(-1);
+  if (!last || !Number.isFinite(audioLength)) return null;
+  const over = last.e - audioLength;
+  return over > 0.05 ? `${where}: the word clock runs ${over.toFixed(2)} s past the audio (the last word ends at ${last.e.toFixed(2)} s, the audio at ${audioLength.toFixed(2)} s), so captions and scene cuts there will be late` : null;
+}
+
 function mediaLength(file) {
   const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file], { encoding: 'utf8' });
   const v = parseFloat(r.stdout);
@@ -181,7 +258,17 @@ export function prepare(reel) {
   const words = readJSON(path.join(reel.dir, 'build', 'words.json'), []) || [];
   const vo = path.join(reel.dir, 'audio', 'vo.mp3');
   const voLength = fs.existsSync(vo) ? mediaLength(vo) : null;
-  const times = timeScenes(scenes, words, { voLength, tail: Number(reel.cfg.tail ?? 0.6), fallbackLength: Number(reel.cfg.duration) || null });
+  // the pauses the voice was joined with; one that scenes.json no longer asks for (or asks for differently) is not used
+  const joined = words.length ? readJSON(path.join(reel.dir, 'build', 'pauses.json'), []) || [] : [];
+  const pauses = joined.filter((p) => scenes[p.n - 1] && Math.abs((scenes[p.n - 1].pause || 0) - p.seconds) < 1e-6);
+  if (words.length) {
+    for (const s of scenes) if (s.pause && !pauses.some((p) => p.n === s.n)) notes.push(`scene ${s.n}: its "pause" (${s.pause.toFixed(2)} s) is not in the voice yet: run  video voice <folder>  again (free: no piece is voiced again) or video stand-in`);
+    for (const p of joined) if (!pauses.includes(p)) notes.push(`the voice has a ${p.seconds.toFixed(2)} s pause for scene ${p.n} that scenes.json no longer asks for: run  video voice <folder>  again (free)`);
+    const late = clockCheck(words, voLength);
+    if (late) notes.push(late);
+  }
+  const endCard = Math.max(0, Number(reel.cfg.end_card) || 0);
+  const times = timeScenes(scenes, words, { voLength, tail: Number(reel.cfg.tail ?? 0.6), fallbackLength: Number(reel.cfg.duration) || null, pauses, endCard });
   if (!words.length) notes.push('no build/words.json yet: scene times are an even split (voice the script first, or video stand-in <dir>)');
   for (const t of times) {
     if (t.source === 'even' && words.length) notes.push(`scene ${t.n}: only ${t.found} of ${t.of} narration words were found in build/words.json, so its time is shared evenly with its neighbours`);
@@ -189,11 +276,17 @@ export function prepare(reel) {
     if (d < 2) notes.push(`scene ${t.n} lasts only ${d.toFixed(2)} s: the engine needs time to draw; give it more narration or merge it`);
     if (d > 16) notes.push(`scene ${t.n} lasts ${d.toFixed(1)} s: split it, a scene this long sits still`);
   }
-  return { scenes, times, words, notes, vo: voLength ? vo : null, voLength, length: times.length ? times.at(-1).t1 : 0 };
+  return { scenes, times, words, notes, pauses, endCard, vo: voLength ? vo : null, voLength, length: times.length ? times.at(-1).t1 : 0 };
 }
 
 /* ── building scene pages ───────────────────────────────────────────────────────────────────────────────────────────── */
-function buildPages(reel, prep) {
+// Two fingerprints per scene. "hash" is the picture: the built page holds everything the frames depend on (runtime, engine,
+// props, the scene's own words on its own clock, its length, size and seed), and nothing about where the scene sits in the
+// video. So when the voice changes in one place (a pause spliced in, one piece voiced again), the scenes whose words and
+// length did not change keep their render, even if they moved. "audio" is the slice of the voice in the scene's own clip
+// (for --scene previews; the finished video takes the whole voice): when only it changed, the sound is put in again
+// without drawing a frame.
+export function buildPages(reel, prep) {
   const out = path.join(reel.dir, 'build', 'scenes');
   fs.mkdirSync(out, { recursive: true });
   const seed = Number(reel.cfg.seed ?? 1);
@@ -211,9 +304,9 @@ function buildPages(reel, prep) {
     const b = spawnSync(process.execPath, args, { encoding: 'utf8' });
     if (b.status !== 0) throw new Error(`building scene ${s.n} failed: ${(b.stderr || b.stdout).trim().slice(0, 600)}`);
     const html = fs.readFileSync(`${base}.html`);
-    // the page holds everything the picture depends on (runtime, engine, props, words, length, size, seed); the sound adds the voice slice
-    const hash = sha(RENDER_VERSION, html, voHash, `${t.t0}|${dur}`);
-    return { scene: s, time: t, dur, base, html: html.toString('utf8'), hash };
+    const hash = sha(RENDER_VERSION, html, `${t.frames}`);
+    const audio = sha(RENDER_VERSION, voHash, `${t.t0}|${t.frames}`);
+    return { scene: s, time: t, dur, base, html: html.toString('utf8'), hash, audio };
   });
 }
 
@@ -260,12 +353,18 @@ function mergeBoxes(samples) {
     .map((b) => ({ ...b, t0: r3(b.t0), t1: r3(b.t1), x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.w), h: Math.round(b.h) }));
 }
 
-function encoder(out, audio, t0, dur, frames) {
+// the scene's slice of the voice (or silence), exactly as long as its frames
+function sliceAudio(audio, t0, dur, frames) {
   const samples = Math.round((frames / FPS) * 48000);
   const audioIn = audio ? ['-ss', t0.toFixed(6), '-t', dur.toFixed(6), '-i', audio] : ['-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo'];
   const filter = audio
     ? `[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=whole_len=${samples},atrim=end_sample=${samples},asetpts=N/SR/TB[a]`
     : `[1:a]atrim=end_sample=${samples},asetpts=N/SR/TB[a]`;
+  return { audioIn, filter };
+}
+
+function encoder(out, audio, t0, dur, frames) {
+  const { audioIn, filter } = sliceAudio(audio, t0, dur, frames);
   // the same settings for every scene (the styles repo's render-scene.mjs), so the scenes join without encoding again
   const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(FPS), '-i', 'pipe:0',
     ...audioIn, '-filter_complex', filter, '-map', '0:v', '-map', '[a]',
@@ -298,15 +397,28 @@ async function renderOne(browser, item, vo) {
   await view.ctx.close();
   fs.renameSync(tmp, mp4);
   const inspected = samples.some((s) => Array.isArray(s.boxes));
-  const manifest = { hash, n: scene.n, id: scene.id, template: scene.template, t0: time.t0, t1: time.t1, frames, errors, inspect: inspected, boxes: inspected ? mergeBoxes(samples) : [] };
+  const manifest = { hash, audio: item.audio, n: scene.n, id: scene.id, template: scene.template, t0: time.t0, t1: time.t1, frames, errors, inspect: inspected, boxes: inspected ? mergeBoxes(samples) : [] };
   fs.writeFileSync(`${base}.json`, JSON.stringify(manifest, null, 1));
   return manifest;
 }
 
+// a render of the same picture; its manifest says where it sat and which slice of the voice its clip holds
 const freshManifest = (item) => {
   const m = readJSON(`${item.base}.json`, null);
-  return m && m.hash === item.hash && fs.existsSync(`${item.base}.mp4`) ? m : null;
+  return m && m.hash === item.hash && m.frames === item.time.frames && fs.existsSync(`${item.base}.mp4`) ? m : null;
 };
+
+// the same picture with the scene's new slice of the voice: the frames are copied, only the sound is made again
+function reslice(item, vo, m) {
+  const { scene, time, base } = item, tmp = `${base}.part.mp4`;
+  const { audioIn, filter } = sliceAudio(vo, time.t0, item.dur, time.frames);
+  ffmpeg(['-i', `${base}.mp4`, ...audioIn, '-filter_complex', filter, '-map', '0:v', '-map', '[a]', '-c:v', 'copy',
+    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-t', (time.frames / FPS).toFixed(6), '-movflags', '+faststart', tmp]);
+  fs.renameSync(tmp, `${base}.mp4`);
+  const manifest = { ...m, audio: item.audio, n: scene.n, id: scene.id, t0: time.t0, t1: time.t1 };
+  fs.writeFileSync(`${base}.json`, JSON.stringify(manifest, null, 1));
+  return manifest;
+}
 
 function ffmpeg(args) {
   const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8' });
@@ -351,9 +463,32 @@ function sfxTrack(reel, items, seconds) {
   return out;
 }
 
+/* ── the music bed ─────────────────────────────────────────────────────────────────────────────── */
+// video.json "music_fade": [in, out] in seconds. The bed is cut to the video's length, fades in over the first and out over
+// the second, ending exactly with the picture; a track shorter than the video loops, and the fade-out still comes at the
+// end. Without "music_fade" it starts at once and fades out over the last 3 s (never a hard cut).
+export const MUSIC_FADE = [0, 3];
+export function musicFade(cfg = {}) {
+  const f = cfg.music_fade;
+  if (f == null) return MUSIC_FADE;
+  if (!Array.isArray(f) || f.length !== 2 || !f.every((x) => Number.isFinite(Number(x)) && Number(x) >= 0)) throw new Error(`video.json "music_fade" must be [fade-in seconds, fade-out seconds], e.g. [3, 8] (it is ${JSON.stringify(f)})`);
+  return f.map(Number);
+}
+export function musicBed({ seconds, musicLength = null, fade = MUSIC_FADE, volume = 0.18 }) {
+  let [fin, fout] = fade;
+  if (fin + fout > seconds) { const k = seconds / (fin + fout); fin *= k; fout *= k; }  // a very short video: both fit
+  const loop = !(Number.isFinite(musicLength) && musicLength >= seconds);
+  const chain = ['aresample=48000', 'aformat=sample_fmts=fltp:channel_layouts=stereo', `atrim=end=${seconds.toFixed(6)}`, 'asetpts=PTS-STARTPTS',
+    ...(fin > 0 ? [`afade=t=in:st=0:d=${fin.toFixed(3)}`] : []),
+    ...(fout > 0 ? [`afade=t=out:st=${Math.max(0, seconds - fout).toFixed(3)}:d=${fout.toFixed(3)}`] : []),
+    `volume=${volume}`].join(',');
+  return { loop, chain, fade: [fin, fout] };
+}
+
 /* ── video render <dir> ─────────────────────────────────────────────────────────────────────────────── */
 export async function renderScenes(reel, { only = null, force = false } = {}) {
   const began = Date.now();
+  if (reel.cfg.music) musicFade(reel.cfg);                      // a wrong "music_fade" stops here, before any scene is drawn
   const prep = prepare(reel);
   for (const n of prep.notes) console.log(`note: ${n}`);
   const build = path.join(reel.dir, 'build');
@@ -371,6 +506,13 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   }
   const todo = pick.filter((it) => force || only != null || !freshManifest(it));
   const manifests = new Map(items.map((it) => [it.scene.n, freshManifest(it)]));
+  // the same picture in a new place (the voice moved around it): only the clip's sound is made again
+  let resliced = 0;
+  for (const it of pick) {
+    const m = manifests.get(it.scene.n);
+    if (todo.includes(it) || !m || m.audio === it.audio) continue;
+    manifests.set(it.scene.n, reslice(it, prep.vo, m)); resliced++;
+  }
   if (todo.length) {
     const browser = await launch();
     try {
@@ -408,6 +550,7 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   const music = reel.cfg.music ? path.resolve(reel.dir, String(reel.cfg.music)) : null;
   if (music && !fs.existsSync(music)) throw new Error(`video.json "music" points at ${music}, which does not exist`);
   const vol = Number(reel.cfg.music_volume ?? 0.18);
+  const bed = music ? musicBed({ seconds, musicLength: mediaLength(music), fade: musicFade(reel.cfg), volume: vol }) : null;
   const stereo = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
   const out = ['-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video];
   if (!prep.vo) ffmpeg(['-i', joined, '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
@@ -416,8 +559,8 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
     const inputs = ['-i', joined, '-i', prep.vo];
     let graph, mixIns;
     if (music) {
-      inputs.push('-stream_loop', '-1', '-i', music);
-      graph = `${voice},asplit=2[voice][sc];[2:a]${stereo},volume=${vol}[music];[music][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked]`;
+      inputs.push(...(bed.loop ? ['-stream_loop', '-1'] : []), '-i', music);
+      graph = `${voice},asplit=2[voice][sc];[2:a]${bed.chain}[music];[music][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked]`;
       mixIns = ['[voice]', '[ducked]'];
     } else { graph = `${voice}[voice]`; mixIns = ['[voice]']; }
     const sfx = sfxTrack(reel, items, seconds);
@@ -429,13 +572,13 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   fs.rmSync(joined, { force: true }); fs.rmSync(list, { force: true });
 
   // resting boxes on the video's clock, for tools/qa.py (safe zone)
-  const boxes = all.flatMap((m) => (m?.boxes || []).map((b) => ({ ...b, t0: r3(b.t0 + m.t0), t1: r3(b.t1 + m.t0), scene: m.n })));
+  const boxes = all.flatMap((m, i) => (m?.boxes || []).map((b) => ({ ...b, t0: r3(b.t0 + items[i].time.t0), t1: r3(b.t1 + items[i].time.t0), scene: items[i].scene.n })));
   const boxFile = path.join(build, 'scene_boxes.json');
   if (all.some((m) => m?.inspect)) fs.writeFileSync(boxFile, JSON.stringify(boxes)); else fs.rmSync(boxFile, { force: true });
 
-  console.log(`render: build/video.mp4 (1920x1080) and build/draft.mp4 (960x540), ${seconds.toFixed(2)} s, ${items.length} scenes: ${todo.length} rendered, ${reused} reused unchanged, ${Math.round((Date.now() - began) / 1000)} s`);
+  console.log(`render: build/video.mp4 (1920x1080) and build/draft.mp4 (960x540), ${seconds.toFixed(2)} s, ${items.length} scenes: ${todo.length} rendered, ${reused} reused unchanged${resliced ? ` (${resliced} with only their sound made again, the voice changed around them)` : ''}, ${Math.round((Date.now() - began) / 1000)} s`);
   if (!prep.vo) console.log('note: no audio/vo.mp3 yet, so the video is silent');
-  else if (Math.abs(seconds - prep.voLength) > 1) console.log(`note: the video (${seconds.toFixed(2)} s) and the voice (${prep.voLength.toFixed(2)} s) differ by more than 1 s`);
+  else if (Math.abs(seconds - prep.voLength - prep.endCard) > 1) console.log(`note: the video (${seconds.toFixed(2)} s) and the voice (${prep.voLength.toFixed(2)} s${prep.endCard ? ` + an end card of ${prep.endCard.toFixed(2)} s` : ''}) differ by more than 1 s`);
   if (standInActive(reel.dir)) console.log('WARNING: audio/vo.mp3 is the STAND-IN tone from video stand-in, not a voice. Voice the script (video voice) before anything is approved or posted.');
 }
 
@@ -533,11 +676,12 @@ export async function checkScenes(reel, { only = null, times = null } = {}) {
 /* ── video plan <dir> ───────────────────────────────────────────────────────────────────────────────────────────── */
 export function printPlan(reel) {
   const prep = prepare(reel);
-  console.log(`scene plan (${reel.cfg.style}, ${prep.scenes.length} scenes, ${prep.length.toFixed(2)} s${prep.voLength ? `, voice ${prep.voLength.toFixed(2)} s` : ''})`);
+  console.log(`scene plan (${reel.cfg.style}, ${prep.scenes.length} scenes, ${prep.length.toFixed(2)} s${prep.voLength ? `, voice ${prep.voLength.toFixed(2)} s` : ''}${prep.endCard ? `, end card ${prep.endCard.toFixed(2)} s` : ''})`);
   for (const t of prep.times) {
     const s = prep.scenes[t.n - 1];
+    const pz = prep.pauses.find((p) => p.n === t.n);
     console.log(`  ${String(t.n).padStart(2)}  ${t.t0.toFixed(2).padStart(6)}-${t.t1.toFixed(2).padStart(6)}s  ${(t.t1 - t.t0).toFixed(2).padStart(5)} s  ${(s.template || `code ${s.code}`).padEnd(20)} ` +
-      (t.source === 'words' ? `words ${t.found}/${t.of}: "${t.first}" .. "${t.last}"` : `even split (${t.found}/${t.of} words found)`));
+      (t.source === 'words' ? `words ${t.found}/${t.of}: "${t.first}" .. "${t.last}"` : pz && !t.of ? 'no words' : `even split (${t.found}/${t.of} words found)`) + (pz ? `  pause ${pz.seconds.toFixed(2)} s at ${pz.at.toFixed(2)} s` : ''));
   }
   for (const n of prep.notes) console.log(`note: ${n}`);
   fs.mkdirSync(path.join(reel.dir, 'build'), { recursive: true });
@@ -586,10 +730,13 @@ export function standIn(reel, { pace = 0.38, force = false } = {}) {
   const scriptFile = path.join(reel.dir, 'script.txt');
   let text = fs.existsSync(scriptFile) ? fs.readFileSync(scriptFile, 'utf8') : '';
   if (!text.trim()) text = planOf(reel.dir, reel.cfg.style).scenes.map((s) => s.narration).join(' ');
-  const words = fakeWords(plain(text), pace);
-  if (!words.length) throw new Error('nothing to say: script.txt and the scene narration are empty');
+  const spoken = fakeWords(plain(text), pace);
+  if (!spoken.length) throw new Error('nothing to say: script.txt and the scene narration are empty');
+  // scenes with a "pause" get their silence, as video voice does
+  let plan = []; try { plan = planOf(reel.dir, reel.cfg.style).scenes; } catch {}
+  const { words, splices, clamped, added } = applyPauses(spoken, placePauses(plan, spoken, spoken.at(-1).e + 0.3));
   // a soft two-tone hum on each word, silence between them, so loudness, length and first-word sync can all be measured
-  const rate = 48000, length = words.at(-1).e + 0.3, pcm = new Int16Array(Math.ceil(length * rate));
+  const rate = 48000, length = spoken.at(-1).e + 0.3 + added, pcm = new Int16Array(Math.ceil(length * rate));
   words.forEach((w, i) => {
     const a = Math.floor(w.s * rate), b = Math.min(pcm.length, Math.floor(w.e * rate)), f = 170 + 25 * (i % 5);
     for (let x = a; x < b; x++) {
@@ -608,6 +755,8 @@ export function standIn(reel, { pace = 0.38, force = false } = {}) {
   // the level voice.py gives a real take (-14 LUFS), so qa reads the stand-in the way it reads a voice
   try { ffmpeg(['-i', tmp, '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=44100', '-ac', '1', '-b:a', '192k', vo]); } finally { fs.rmSync(tmp, { force: true }); }
   writeWords(reel.dir, words);
+  writePauses(reel.dir, splices);
+  if (splices.length) console.log(`pauses: ${splices.map((p) => `${p.seconds.toFixed(2)} s for scene ${p.n} at ${p.at.toFixed(2)} s`).join(', ')}${clamped ? ` (${clamped} word(s) that ran over a splice were cut at it)` : ''}`);
   fs.writeFileSync(path.join(reel.dir, 'build', 'voice-stand-in.json'), JSON.stringify({ note: 'audio/vo.mp3 is a stand-in tone made by video stand-in, not a voice', sha: sha(fs.readFileSync(vo)), words: words.length }, null, 1));
   console.log(`stand-in voice: audio/vo.mp3 ${mediaLength(vo)?.toFixed(2)} s (a tone on each word, no key, no credits) · ${words.length} fake word times → build/words.json + build/word_index.txt`);
   console.log('This is for previews and tests only. Voice the script with video voice before anything is approved or posted.');

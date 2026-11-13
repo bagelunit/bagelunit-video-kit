@@ -1,4 +1,4 @@
-// reels.mjs · turns a long video into reels for the BagelUnit Reel Kit. The 19 scene styles are built for both shapes,
+// reels.mjs · turns a long video into reels for the BagelUnit Reel Kit. The 20 scene styles are built for both shapes,
 // so a stretch of the video's scenes (same templates, same props, same words) becomes a vertical reel in the same style.
 //
 //   video reels <video>                      the stretches that would make good reels (20 to 50 s), chapter by chapter
