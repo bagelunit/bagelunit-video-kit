@@ -332,4 +332,22 @@ await test('thumbnail words: 2 to 5 of them, and not a copy of the title', async
   assert.ok(thumbnailNotes('How big is Jupiter', 'How big is Jupiter, really?').some((n) => /repeats the title/.test(n)));
 });
 
+
+await test('reels: stretches per chapter, ranges checked, numbering never reuses a reel, research lines found in nested props', async () => {
+  const R = await import('../studio/tools/reels.mjs');
+  const b = tmp(); fs.mkdirSync(path.join(b, 'brand')); fs.writeFileSync(path.join(b, 'brand', 'brand.json'), '{}'); fs.mkdirSync(path.join(b, 'reels', 'space-reel-2'), { recursive: true });
+  const d = path.join(b, 'videos', 'space'); fs.mkdirSync(path.join(d, 'build'), { recursive: true });
+  const scenesList = Array.from({ length: 8 }, (_, i) => ({ template: 't', props: i === 5 ? { levels: [{ label: 'Earth', note: '12,742 km' }] } : {}, narration: `Scene ${i + 1} says a few words here.`, ...(i % 4 === 0 ? { chapter: `Part ${i / 4 + 1}` } : {}) }));
+  fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify({ scenes: scenesList }));
+  fs.writeFileSync(path.join(d, 'build', 'scene_times.json'), JSON.stringify(scenesList.map((_, i) => ({ t0: i * 10, t1: (i + 1) * 10 }))));
+  fs.writeFileSync(path.join(d, 'research.md'), '- Earth is 12,742 km wide [a](https://example.org/a)\n- Mars is 6,779 km wide [b](https://example.org/b)\n');
+  const { suggestions } = R.suggest(d);
+  assert.deepEqual(suggestions.map((x) => [x.from, x.to]), [[1, 4], [5, 8]]);
+  assert.throws(() => R.parsePick('7-9', 8), /scenes 1 to 8/);
+  const plans = R.planReels({ dir: d, name: 'space', cfg: { style: 'clean-shapes' } }, R.parsePick('1-2,5-6', 8));
+  assert.deepEqual(plans.map((p) => p.slug), ['space-reel-3', 'space-reel-4']);
+  assert.deepEqual(plans[1].facts, ['- Earth is 12,742 km wide [a](https://example.org/a)']);
+  assert.ok(plans.every((p) => p.scenes.every((x) => !('chapter' in x))), 'chapters stay with the video');
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

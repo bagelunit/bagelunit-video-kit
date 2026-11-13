@@ -17,6 +17,7 @@
 //   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--name b | --use b]  out/thumbnail.jpg (1280x720)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
+//   node video.mjs reels <folder> [--pick 3-5,12-14] [--apply]  turn stretches of the video into Reel Kit reels (dry run first)
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
 //   node video.mjs youtube <login|upload> ...              youtube.mjs
@@ -388,13 +389,29 @@ async function main() {
     });
     case 'thumbnail': return run(() => thumbnail(openVideo(arg), flags));
     case 'doctor': return doctor();
+    case 'reels': return run(async () => {
+      const v = openVideo(arg), R = await import('./reels.mjs');
+      const mm = (x) => `${Math.floor(x / 60)}:${String(Math.round(x % 60)).padStart(2, '0')}`;
+      if (!flags.pick || flags.pick === true) {
+        const { clock, suggestions } = R.suggest(v.dir);
+        if (!clock.length) return console.log('no scenes yet: plan scenes.json first');
+        console.log(`stretches of ${R.REEL_MIN} to ${R.REEL_MAX} s that could stand alone as reels${clock.some((c) => c.estimate) ? ' (times estimated from the words: voice the video for exact ones)' : ''}:`);
+        for (const x of suggestions) console.log(`  scenes ${x.from}-${x.to}  ${Math.round(x.seconds)} s  ${x.chapter ? `[${x.chapter}] ` : ''}"${x.first.slice(0, 90)}"`);
+        return console.log('pick the strongest (an idea that stands alone, with a number or a turn in it), then:  video reels <folder> --pick 3-5,12-14');
+      }
+      const plans = R.planReels(v, R.parsePick(flags.pick, R.sceneClock(v.dir).length));
+      for (const p of plans) console.log(`${flags.apply ? 'making' : 'would make'}  reels/${p.slug}  scenes ${p.from}-${p.to}, ${Math.round(p.seconds)} s${p.estimate ? ' (estimate)' : ''}, ${p.scenes.length} scenes, ${p.facts.length} research line(s) to clear${p.seconds > R.REEL_MAX ? '  note: long for a reel' : ''}`);
+      if (!flags.apply) return console.log('a dry run: nothing made. Add --apply to make these reel folders.');
+      R.makeReels(v, plans, { kit: path.join(REEL_ENGINE, 'tools', 'kit.mjs') });
+      console.log(`done. In the brand folder, /bagelunit-reels takes each reel on: a new first line (the hook), facts-from-video.md cleared into brand/facts.md, its own voice, gates A, B and C.`);
+    });
     case 'dashboard': return run(async () => {
       const file = await drawDashboard(dashboardRoot(arg), { credits: Boolean(flags.credits) });
       if (flags.open) spawnSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [file], { stdio: 'ignore' });
     });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
-      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 22).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 23).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
       if (cmd) process.exitCode = 1;
   }
 }
