@@ -22,6 +22,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { approvalCurrent } from './checks.mjs';
 
 export const CONFIG_DIR = process.env.BAGELUNIT_VIDEO_CONFIG || path.join(os.homedir(), '.config', 'bagelunit-video');
 const REEL_CONFIG = path.join(os.homedir(), '.config', 'bagelunit-reels');
@@ -200,6 +201,8 @@ export async function upload(dir, { privacy, yes = false, again = false, thumb =
   const size = fs.existsSync(mp4) ? fs.statSync(mp4).size : 0;
   const withThumb = thumb && fs.existsSync(jpg);
   const issues = problems(t, { video: size > 0, thumbnail: withThumb ? fs.statSync(jpg) : null, standIn, privacy });
+  const approved = approvalCurrent(dir, 'final');
+  if (!approved.ok) issues.push(approved.why);
   const published = readJSON(path.join(dir, 'out', 'youtube-published.json'), null);
   if (published && !again) issues.push(`already uploaded: ${published.url}. A second upload needs --again`);
   const meta = metadata(t, { privacy, categoryId: cfgV.category_id, madeByAi: Boolean(cfgV.ai_generated) });

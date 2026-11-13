@@ -8,10 +8,15 @@
 //   node video.mjs plan <folder>                           each scene's time (from the voice's word times)
 //   node video.mjs stand-in <folder> [--pace 0.38]         a no-key, no-credit tone as the voice, for previews and tests
 //   node video.mjs voice <folder> [--voice id] [--speed 1] [--force]  voice script.txt in chunks (Reel Kit voice.py), one audio file
+//   node video.mjs facts <folder> [--scope script|final]   fact check: every number said or shown is in research.md
+//   node video.mjs facts <folder> record --result PASS|FAIL [--scope s] [--note t]   the verdict after re-reading sources
+//   node video.mjs approve <folder> map|final [--note t]   record the person's go-ahead (map: before the voice; final: before upload)
 //   node video.mjs check <folder> [--only n]               every scene: errors, safe area, seeking, stills to look at
 //   node video.mjs render <folder> [--scene n] [--force]   render changed scenes, join them, mix the voice: out/video.mp4
 //   node video.mjs chapters <folder>                       out/chapters.txt (YouTube chapters) from the scenes' "chapter"
 //   node video.mjs thumbnail <folder> [--at s | --scene n] out/thumbnail.jpg (1280x720) from a frame of the video
+//   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
+//   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
 //   node video.mjs doctor                                  what is installed and what is missing
 //   node video.mjs youtube <login|upload> ...              youtube.mjs
 import { spawnSync } from 'node:child_process';
@@ -20,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as scenes from './scenes.mjs';
+import * as checks from './checks.mjs';
 
 const TOOLS = path.dirname(fileURLToPath(import.meta.url));
 export const REEL_ENGINE = process.env.BAGELUNIT_REEL_ENGINE || path.join(os.homedir(), '.claude', 'skills', 'bagelunit-reels');
@@ -86,7 +92,9 @@ function newVideo(folder, flags) {
   const style = flags.style;
   if (!style || style === true) die(`say the style: --style <id>. The styles: ${scenes.sceneStyleIds().join(', ')}`);
   if (!scenes.isSceneStyle(style)) die(`no style "${style}" in this kit. It has: ${scenes.sceneStyleIds().join(', ')}`);
-  const dir = path.resolve(folder);
+  // inside a Reel Kit brand folder, a bare name becomes videos/<name>, next to reels/
+  const brand = checks.findBrand(process.cwd());
+  const dir = brand && !/[\\/]/.test(folder) ? path.join(brand.dir, 'videos', folder) : path.resolve(folder);
   fs.mkdirSync(dir, { recursive: true });
   const files = scenes.starterFiles(style);
   const kept = [];
@@ -101,7 +109,9 @@ function newVideo(folder, flags) {
   const rf = path.join(dir, 'research.md');
   if (fs.existsSync(rf)) kept.push('research.md'); else fs.writeFileSync(rf, RESEARCH_PAGE);
   for (const d of ['audio', 'build', 'out']) fs.mkdirSync(path.join(dir, d), { recursive: true });
+  const inBrand = checks.findBrand(dir);
   console.log(`new ${style} video: ${dir}${kept.length ? `  (kept: ${kept.join(', ')})` : ''}`);
+  if (inBrand) console.log(`brand: ${inBrand.cfg.name || path.basename(inBrand.dir)} (voice, cleared facts, never-say list and call to action come from ${path.join(inBrand.dir, 'brand')})`);
   console.log('next: research (research.md), report and map the video for the person and wait for their go-ahead, then write outline.md and script.txt, plan scenes.json (templates: node video.mjs styles ' + style + '), then  voice  and  render  (SKILL.md)');
 }
 
@@ -127,11 +137,28 @@ export function chunkScript(text, max = CHUNK) {
   return out;
 }
 
+// a chunk already voiced with the same words is reused by voice.py for free, so only the others count against the credits
+const chunkDone = (d, text) => fs.existsSync(path.join(d, 'audio', 'vo.mp3')) && fs.existsSync(path.join(d, 'script.txt')) && fs.readFileSync(path.join(d, 'script.txt'), 'utf8').trim() === text.trim();
+function creditCheck(todo, root, flags) {
+  const budget = path.join(REEL_ENGINE, 'tools', 'budget.py');
+  if (!todo.length || !fs.existsSync(budget)) return;
+  fs.mkdirSync(root, { recursive: true });
+  const f = path.join(root, 'to-voice.txt');
+  fs.writeFileSync(f, todo.join('\n\n') + '\n');
+  const r = spawnSync(process.env.PYTHON || 'python3', [budget, f, '--takes', '1'], { encoding: 'utf8' });
+  process.stdout.write((r.stdout || '').split('\n').filter(Boolean).map((l) => `credits check: ${l}\n`).join(''));
+  if (r.status === 1 && !flags['skip-credit-check']) die('not voicing: not enough ElevenLabs characters left for this script. Top up, wait for the monthly reset, shorten the script, or split the video into parts (or run again with --skip-credit-check).');
+}
+
 function voice(video, flags) {
   const script = path.join(video.dir, 'script.txt');
   if (!fs.existsSync(script)) die('no script.txt to voice');
   const research = researchState(video.dir, video.cfg);
   if (!research.ok) die(`not voicing yet: ${research.why}. Research comes before the voice (SKILL.md steps 3 and 4); for a video with nothing to check, put "no_research": "<why>" in video.json.`);
+  const map = checks.approvalCurrent(video.dir, 'map');
+  if (!map.ok) die(`not voicing yet: ${map.why}.`);
+  const facts = checks.factsCurrent(video.dir, 'script');
+  if (!facts.ok) die(`not voicing yet: ${facts.why}.`);
   const py = path.join(REEL_ENGINE, 'tools', 'voice.py');
   if (!fs.existsSync(py)) die(`the Reel Kit engine is not installed (${py} is missing). Run bash setup/install.sh in the Reel Kit first.`);
   if (scenes.standInIsActive?.(video.dir)) fs.rmSync(path.join(video.dir, 'audio', 'vo.mp3'), { force: true });
@@ -139,13 +166,17 @@ function voice(video, flags) {
   // natural pace for long videos: the Reel Kit's voice tool speeds reels up (x1.15); a video keeps x1.0 unless video.json "voice_speed" says otherwise
   const speed = Number(flags.speed && flags.speed !== true ? flags.speed : video.cfg.voice_speed ?? 1) || 1;
   if (speed < 0.7 || speed > 1.3) die(`voice_speed ${speed} is out of range (0.7 to 1.3)`);
+  const brand = checks.findBrand(video.dir);
+  const voiceCfg = video.cfg.voice || (brand?.cfg.voice?.voice_id ? { voice_id: brand.cfg.voice.voice_id, ...(brand.cfg.voice.provider ? { provider: brand.cfg.voice.provider } : {}) } : undefined);
+  const root0 = path.join(video.dir, 'build', 'voice');
+  creditCheck(chunks.filter((text, i) => !chunkDone(path.join(root0, String(i + 1).padStart(3, '0')), text)), root0, flags);
   const root = path.join(video.dir, 'build', 'voice');
   const parts = [];
   chunks.forEach((text, i) => {
     const d = path.join(root, String(i + 1).padStart(3, '0'));
     fs.mkdirSync(path.join(d, 'audio'), { recursive: true });
     fs.writeFileSync(path.join(d, 'script.txt'), text + '\n');
-    fs.writeFileSync(path.join(d, 'reel.json'), JSON.stringify({ voice: video.cfg.voice || undefined }, null, 1) + '\n');
+    fs.writeFileSync(path.join(d, 'reel.json'), JSON.stringify({ voice: voiceCfg }, null, 1) + '\n');
     console.log(`voice: chunk ${i + 1}/${chunks.length} (${text.length} characters)`);
     const args = [py, d, '--speed', String(speed), ...(flags.voice && flags.voice !== true ? ['--voice', flags.voice] : []), ...(flags.force ? ['--force'] : [])];
     const r = spawnSync(process.env.PYTHON || 'python3', args, { stdio: 'inherit' });
@@ -216,6 +247,21 @@ async function thumbnail(video, flags) {
   if (fs.statSync(out).size > 2 * 1024 * 1024) console.log('note: YouTube takes thumbnails up to 2 MB; this is larger');
 }
 
+/* ── fact check ─────────────────────────────────────────────────────────────────────────────────────────────────────── */
+function factsCmd(loose, flags) {
+  const v = openVideo(loose[1]), scope = flags.scope && flags.scope !== true ? String(flags.scope) : 'script';
+  if (loose[2] === 'record') {
+    const rec = checks.recordFacts(v.dir, { scope, result: String(flags.result || '').toUpperCase(), note: typeof flags.note === 'string' ? flags.note : '', cfg: v.cfg });
+    return console.log(`fact check (${scope}): ${rec.result} recorded (${rec.at}), written to approvals.md`);
+  }
+  const r = checks.factCheck(v.dir, { scope, cfg: v.cfg });
+  for (const e of r.errors) console.log(`ERROR  ${e}`);
+  for (const w of r.warnings) console.log(`WARN   ${w}`);
+  console.log(`fact check (${scope}): ${r.errors.length} error(s), ${r.warnings.length} warning(s). Worksheet: build/factcheck.md`);
+  console.log(r.errors.length ? 'Fix the errors (add the source to research.md, or change the words), then check again.' : `Now re-read each source for the lines in the worksheet, then:  video facts <folder> record --scope ${scope} --result PASS`);
+  if (r.errors.length) process.exitCode = 1;
+}
+
 /* ── doctor ─────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 function doctor() {
   const ok = (b, text, fix) => console.log(`${b ? 'ok     ' : 'MISSING'} ${text}${!b && fix ? `  -> ${fix}` : ''}`);
@@ -253,11 +299,32 @@ async function main() {
       chapters(v);
     });
     case 'chapters': return run(() => chapters(openVideo(arg)));
+    case 'facts': return run(() => factsCmd(loose, flags));
+    case 'approve': return run(() => {
+      const v = openVideo(arg), which = loose[2];
+      const rec = checks.approve(v.dir, which, { note: typeof flags.note === 'string' ? flags.note : '', cfg: v.cfg, researchOk: researchState(v.dir, v.cfg) });
+      console.log(`approved: ${which} (${rec.at}), written to approvals.md`);
+    });
+    case 'qa': return run(() => {
+      const v = openVideo(arg);
+      const r = checks.qa(v.dir, { standIn: Boolean(scenes.standInIsActive?.(v.dir)) });
+      for (const c of r.checks) console.log(`${c.status.padEnd(4)}  ${c.name.padEnd(13)} ${c.text}`);
+      console.log(`QA: ${r.result}  (build/qa.json)`);
+      if (r.result !== 'PASS') process.exitCode = 1;
+    });
+    case 'tidy': return run(() => {
+      const v = openVideo(arg), r = checks.tidy(v.dir, { apply: Boolean(flags.apply) });
+      if (!r.items.length) return console.log('nothing to tidy');
+      for (const x of r.items) console.log(`${flags.apply ? 'removed' : 'would remove'}  ${x.rel}  ${(x.bytes / 1048576).toFixed(0)} MB`);
+      console.log(`${flags.apply ? 'freed' : 'would free'} ${(r.bytes / 1048576).toFixed(0)} MB. Kept: the words, research, plan, voice (and its paid-chunk records), approvals and out/.`);
+      if (!r.uploaded) console.log('note: not uploaded yet. A later render makes the clips again (free, it takes about as long as the video).');
+      if (!flags.apply) console.log('run again with --apply to delete them');
+    });
     case 'thumbnail': return run(() => thumbnail(openVideo(arg), flags));
     case 'doctor': return doctor();
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
-      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 17).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 21).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
       if (cmd) process.exitCode = 1;
   }
 }

@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { chunkScript, chapterLines, stamp } from '../studio/tools/video.mjs';
 import * as yt from '../studio/tools/youtube.mjs';
 import * as scenes from '../studio/tools/scenes.mjs';
+import * as checks from '../studio/tools/checks.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let n = 0;
@@ -54,7 +55,8 @@ await test('parts and problems: title, limits, chapters appended, no #Shorts', (
   assert.ok(yt.problems(p, { ...ok, privacy: 'everyone' }).length);
 });
 
-const fakeFolder = ({ standIn = false } = {}) => {
+const approveFinal = (d) => { fs.writeFileSync(path.join(d, 'build', 'approvals.json'), JSON.stringify({ final: { at: 'test', files: Object.fromEntries(['video.mp4', 'thumbnail.jpg', 'youtube.txt'].map((x) => [x, checks.sha256File(path.join(d, 'out', x))])) } })); };
+const fakeFolder = ({ standIn = false, approved = true } = {}) => {
   const d = tmp();
   fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.mkdirSync(path.join(d, 'audio'), { recursive: true }); fs.mkdirSync(path.join(d, 'build'), { recursive: true });
   fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: 'T' }));
@@ -63,6 +65,7 @@ const fakeFolder = ({ standIn = false } = {}) => {
   fs.writeFileSync(path.join(d, 'out', 'chapters.txt'), '0:00 One\n0:30 Two\n1:00 Three\n');
   fs.writeFileSync(path.join(d, 'audio', 'vo.mp3'), 'voice');
   if (standIn) fs.writeFileSync(path.join(d, 'build', 'voice-stand-in.json'), JSON.stringify({ sha: createHash('sha256').update('voice').digest('hex') }));
+  if (approved) approveFinal(d);
   return d;
 };
 const cred = () => { const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'id', client_secret: 'secret-xyz', refresh_token: 'rt' })); return c; };
@@ -144,6 +147,8 @@ subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lav
   const dir = tmp();
   fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({ style: 'clean-shapes', no_research: 'a test script' }));
   fs.writeFileSync(path.join(dir, 'script.txt'), Array.from({ length: 12 }, (_, i) => `Paragraph ${i} has some words in it, nothing more.`).join('\n\n'));
+  fs.writeFileSync(path.join(dir, 'outline.md'), '# Map\n');
+  checks.approve(dir, 'map'); checks.recordFacts(dir, { scope: 'script', result: 'PASS', cfg: { no_research: 'a test script' } });
   const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', dir], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: eng, VIDEO_CHUNK: '120' } });
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.ok(fs.existsSync(path.join(dir, 'audio', 'vo.mp3')));
@@ -171,6 +176,100 @@ await test('research comes before the voice: empty page, too few sources, a reas
   const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', v], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: tmp() } });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr + r.stdout, /not voicing yet/);
+});
+
+
+await test('upload needs the final approval, for exactly the approved files', async () => {
+  await assert.rejects(yt.upload(fakeFolder({ approved: false }), { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /not been approved/);
+  const d = fakeFolder();
+  fs.writeFileSync(path.join(d, 'out', 'youtube.txt'), 'A different title\n\nChanged after approval.');
+  await assert.rejects(yt.upload(d, { fetchImpl: fakeYouTube().fetchImpl, credDir: cred(), log: () => {} }), /youtube.txt changed after the final approval/);
+});
+
+await test('numbers are read the way scripts say them and sources write them', () => {
+  const v = (t) => checks.numbersIn(t).map((n) => n.value);
+  assert.deepEqual(v('About sixty four percent of adults'), [64]);
+  assert.deepEqual(v('in nineteen sixty nine and twenty twenty four'), [1969, 2024]);
+  assert.deepEqual(v('one point four million km, 1,400,000 km, 1.4 million'), [1.4e6, 1.4e6, 1.4e6]);
+  assert.deepEqual(v('a hundred and twelve, two thousand and five, three hundred thousand'), [112, 2005, 300000]);
+  assert.ok(checks.numbersIn('64%')[0].pct && checks.numbersIn('sixty four per cent')[0].pct);
+});
+
+await test('fact check: unsourced numbers fail, rounding warns, never-say fails, PASS needs a clean check and goes stale', () => {
+  const b = tmp(); fs.mkdirSync(path.join(b, 'brand'));
+  fs.writeFileSync(path.join(b, 'brand', 'brand.json'), JSON.stringify({ name: 'Acme', voice: { never_say: ['guaranteed results'] } }));
+  fs.writeFileSync(path.join(b, 'brand', 'facts.md'), '# facts\n\n## Never say\n- miracle\n');
+  const d = path.join(b, 'videos', 'v1'); fs.mkdirSync(d, { recursive: true });
+  fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes' }));
+  fs.writeFileSync(path.join(d, 'research.md'), '# Research\n- 64% of adults need glasses [a](https://example.org/a)\n- Earth is 12,742 km wide [b](https://example.org/b)\n');
+  fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify({ scenes: [{ template: 'x', props: { note: '12,742 km' } }] }));
+  fs.writeFileSync(path.join(d, 'script.txt'), 'Sixty four percent of adults need glasses. Earth is about twelve thousand seven hundred km wide.');
+  let r = checks.factCheck(d);
+  assert.equal(r.errors.length, 0, r.errors.join('\n')); assert.ok(r.warnings.some((w) => /rounded/.test(w)));
+  fs.writeFileSync(path.join(d, 'script.txt'), 'Seventy one percent of people agree. It is a miracle.');
+  r = checks.factCheck(d);
+  assert.ok(r.errors.some((e) => /seventy one/.test(e))); assert.ok(r.errors.some((e) => /miracle/.test(e)));
+  assert.throws(() => checks.recordFacts(d, { scope: 'script', result: 'PASS' }), /refused/);
+  fs.writeFileSync(path.join(d, 'script.txt'), 'Sixty four percent of adults need glasses.');
+  checks.recordFacts(d, { scope: 'script', result: 'PASS' });
+  assert.equal(checks.factsCurrent(d, 'script').ok, true);
+  fs.appendFileSync(path.join(d, 'script.txt'), ' And more words.');
+  assert.match(checks.factsCurrent(d, 'script').why, /changed/);
+  assert.match(fs.readFileSync(path.join(d, 'approvals.md'), 'utf8'), /## Fact check\n- .* script: PASS/);
+});
+
+await test('the voice waits for the map approval and the fact check', () => {
+  const v = tmp();
+  fs.writeFileSync(path.join(v, 'video.json'), JSON.stringify({ style: 'clean-shapes', no_research: 'test' }));
+  fs.writeFileSync(path.join(v, 'script.txt'), 'Words to say.');
+  const run = () => spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', v], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: tmp() } });
+  assert.match(run().stderr, /map has not been approved/);
+  fs.writeFileSync(path.join(v, 'outline.md'), '# Map\n'); checks.approve(v, 'map');
+  assert.match(run().stderr, /no fact check recorded/);
+  checks.recordFacts(v, { scope: 'script', result: 'PASS', cfg: { no_research: 'test' } });
+  assert.match(run().stderr, /Reel Kit engine is not installed/);
+  fs.appendFileSync(path.join(v, 'outline.md'), 'A new chapter\n');
+  assert.match(run().stderr, /changed after it was approved/);
+});
+
+await test('qa passes a clean 1920x1080 file and fails a still picture and the wrong size', () => {
+  const make = (src) => {
+    const d = tmp(); fs.mkdirSync(path.join(d, 'out')); fs.mkdirSync(path.join(d, 'audio'));
+    spawnSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=f=300:d=6', '-af', 'loudnorm=I=-14:TP=-1.5', '-ar', '44100', path.join(d, 'audio', 'vo.mp3')]);
+    const r = spawnSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `${src}:rate=30:duration=6`, '-i', path.join(d, 'audio', 'vo.mp3'), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', path.join(d, 'out', 'video.mp4')]);
+    assert.equal(r.status, 0, r.stderr);
+    return d;
+  };
+  const good = checks.qa(make('testsrc2=size=1920x1080'));
+  assert.equal(good.result, 'PASS', JSON.stringify(good.checks));
+  const still = checks.qa(make('color=c=0x336699:size=1920x1080'));
+  assert.equal(still.checks.find((c) => c.name === 'still picture').status, 'FAIL');
+  assert.equal(checks.qa(make('testsrc2=size=1080x1920')).checks.find((c) => c.name === 'spec').status, 'FAIL');
+});
+
+await test('final approval needs a current QA PASS and a final fact check', () => {
+  const d = fakeFolder({ approved: false });
+  assert.throws(() => checks.approve(d, 'final'), /no quality check/);
+  fs.writeFileSync(path.join(d, 'build', 'qa.json'), JSON.stringify({ result: 'PASS', sha: checks.sha256File(path.join(d, 'out', 'video.mp4')), at: 'x' }));
+  assert.throws(() => checks.approve(d, 'final'), /no fact check recorded for the final/);
+});
+
+await test('tidy lists first, then removes only what a render makes again', () => {
+  const d = tmp();
+  for (const f of ['build/scenes/001.mp4', 'build/video.mp4', 'build/voice/001/audio/vo.mp3', 'audio/vo.mp3', 'out/video.mp4']) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), Buffer.alloc(1000)); }
+  assert.equal(checks.tidy(d).items.length, 2);
+  assert.ok(fs.existsSync(path.join(d, 'build', 'video.mp4')), 'a dry run deletes nothing');
+  checks.tidy(d, { apply: true });
+  for (const kept of ['build/voice/001/audio/vo.mp3', 'audio/vo.mp3', 'out/video.mp4']) assert.ok(fs.existsSync(path.join(d, kept)), kept);
+  assert.ok(!fs.existsSync(path.join(d, 'build', 'scenes')) && !fs.existsSync(path.join(d, 'build', 'video.mp4')));
+});
+
+await test('video new inside a brand folder makes videos/<name>', () => {
+  const b = tmp(); fs.mkdirSync(path.join(b, 'brand')); fs.writeFileSync(path.join(b, 'brand', 'brand.json'), JSON.stringify({ name: 'Acme' }));
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'new', 'first-video', '--style', 'clean-shapes'], { encoding: 'utf8', cwd: b });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(b, 'videos', 'first-video', 'research.md')));
+  assert.match(r.stdout, /brand: Acme/);
 });
 
 console.log(n ? `\n${n} test(s) passed` : '');

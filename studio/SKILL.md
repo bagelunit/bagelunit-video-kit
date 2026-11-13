@@ -18,8 +18,20 @@ outline.md     the map: promise, hook, chapters, one line per scene, payoff
 script.txt     the narration, paragraphs between ideas
 scenes.json    {"scenes": [{"chapter": "optional title", "template": "<id>", "props": {...}, "narration": "exact words from script.txt"}]}
 audio/vo.mp3   the voice (video voice), build/words.json the clock of every word
+approvals.md   the record of each fact check and approval (the kit writes it; earlier lines are never changed)
 out/           video.mp4, chapters.txt, thumbnail.jpg, youtube.txt (title on line 1, description after)
 ```
+
+## In a brand folder
+
+When Claude Code runs in a BagelUnit Reel Kit brand folder (it has `brand/brand.json`), videos live in `videos/<name>` next to `reels/`: `video new <name> --style <id>` puts them there. The video then belongs to the brand:
+
+- **Read first:** `brand/brand.json` (name, `voice`, `cta`, `niche`), `brand/voice.md` (how the brand talks, words it never uses) and `brand/facts.md` (cleared facts and the "Never say" list).
+- **Voice:** the brand's ElevenLabs voice is used unless video.json sets its own `voice`. Spell tricky names in script.txt the way `voice.pronunciation` says (on screen they keep their real spelling).
+- **Facts:** a cleared fact in `brand/facts.md` counts as a source in the fact check; anything on the brand's never-say lists (`voice.never_say`, and "Never say" in facts.md) fails it.
+- **Call to action:** the last scene and the description end on the brand's call to action (`cta`).
+
+Outside a brand folder the video stands alone and none of this applies.
 
 ## The order of work
 
@@ -32,15 +44,18 @@ out/           video.mp4, chapters.txt, thumbnail.jpg, youtube.txt (title on lin
    - **The map:** hook, chapters with their scenes in one line each, payoff, and the estimated length (planned words / 150 = minutes).
    - **Parts, if it runs long** (see "Long videos" below).
    - **What the voice will cost:** about the script's length in characters (roughly 900 a minute).
-   Then wait. Nothing past this step (script, voice, render) happens until the person says go, or asks for changes to the map.
+   Then wait. Nothing past this step (script, voice, render) happens until the person says go, or asks for changes to the map. On their go-ahead, record it: `video approve <folder> map --note "<what they said>"`. If the map or the research changes later, show the person what changed and approve again; the voice checks.
 5. **Script (script.txt).** Follow the approved map. Write for the ear: short sentences, one idea per sentence, numbers said the way they are spoken. About 150 words a minute. A blank line between ideas. No filler openings or closings.
 6. **Scenes (scenes.json).** One scene per idea, 5 to 15 seconds of narration (the planner flags under 2 s and over 16 s). `narration` is the exact words of script.txt the scene covers, in order, and every word of the script belongs to exactly one scene: times come from the voice's word clock, never from typed numbers. Spread templates; never the same one many times in a row. Mark the first scene of each chapter with `"chapter": "Short title"` (2 to 6 words, specific): these become YouTube chapters (at least 3, the first at 0:00, 10 s apart or more).
-7. **Voice.** `video voice <folder>` speaks script.txt in chunks with the Reel Kit's voice tool (a chunk is only paid for once; a re-run after a failure pays only for chunks still missing) and joins them, at natural pace (`"voice_speed"` in video.json changes it, 0.7 to 1.3; reels are sped up, videos are not; set it before the first voice, because a new speed is voiced and paid for again). No key or no credits: `video stand-in <folder>` makes a tone and fake word times so everything else can be built and checked; the render warns loudly while the stand-in is in use, and `youtube upload` refuses it.
-8. **Plan and check.** `video plan <folder>` shows each scene's time and what was found in the word clock. `video check <folder>` draws every scene, reports errors, anything outside the title-safe area (5% margin), and whether each scene seeks to the same picture every time, with stills in `build/scenes/check/`. Look at the stills. Fix, then check again.
-9. **Render.** `video render <folder>` renders only changed scenes, joins them without re-encoding the picture, mixes the voice (and `music` from video.json, ducked under speech) at -14 LUFS, and writes `out/video.mp4` and `out/chapters.txt`. `--scene n` renders one scene; `--force` renders all.
-10. **Thumbnail.** `video thumbnail <folder> [--at seconds | --scene n]` makes `out/thumbnail.jpg` (1280x720). Look at it.
-11. **YouTube text.** Write `out/youtube.txt`: the title (100 characters at most, no < or >) on line 1, then the description (the promise, what the viewer learns, no invented claims). Chapters are appended from `out/chapters.txt`.
-12. **Upload.** `video youtube login` once (Google Cloud "Desktop app" client; the Reel Kit's docs/connect.md step 6B). Then `video youtube upload <folder>` is a dry run that lists every problem; `--yes` sends it, private by default. Never make a video public without the person saying so. Never upload twice (the kit refuses without `--again`).
+7. **Fact check.** `video facts <folder>` reads every number in the script and on screen (spoken or written: "sixty four percent" matches "64%") and fails any that is not in research.md (or the brand's facts.md); a rounded number is a warning to say "about"; absolute words (only, never, biggest) are listed, because they need a source that says exactly that; the brand's never-say list fails. Fix every error. Then re-read the sources for each line in the worksheet `build/factcheck.md`, and record the verdict: `video facts <folder> record --result PASS` (refused while there are errors). Changing the script, the scenes or the research afterwards makes it out of date.
+8. **Voice.** `video voice <folder>` refuses until the map is approved and the fact check is a current PASS. It first checks the ElevenLabs characters left (for the chunks not voiced yet) and stops if there are not enough: say so and offer to top up, wait for the reset, shorten, or split into parts. Then it speaks script.txt in chunks with the Reel Kit's voice tool (a chunk is only paid for once; a re-run after a failure pays only for chunks still missing) and joins them, at natural pace (`"voice_speed"` in video.json changes it, 0.7 to 1.3; reels are sped up, videos are not; set it before the first voice, because a new speed is voiced and paid for again). No key or no credits: `video stand-in <folder>` makes a tone and fake word times so everything else can be built and checked (it needs no approval); the render warns loudly while the stand-in is in use, and QA and the upload refuse it.
+9. **Plan and check.** `video plan <folder>` shows each scene's time and what was found in the word clock. `video check <folder>` draws every scene, reports errors, anything outside the title-safe area (5% margin), and whether each scene seeks to the same picture every time, with stills in `build/scenes/check/`. Look at the stills. Fix, then check again.
+10. **Render.** `video render <folder>` renders only changed scenes, joins them without re-encoding the picture, mixes the voice (and `music` from video.json, ducked under speech) at -14 LUFS, and writes `out/video.mp4` and `out/chapters.txt`. `--scene n` renders one scene; `--force` renders all.
+11. **Thumbnail.** `video thumbnail <folder> [--at seconds | --scene n]` makes `out/thumbnail.jpg` (1280x720). Look at it.
+12. **YouTube text.** Write `out/youtube.txt`: the title (100 characters at most, no < or >) on line 1, then the description (the promise, what the viewer learns, the call to action, no invented claims). Chapters are appended from `out/chapters.txt`.
+13. **Final checks, then the person's yes.** `video qa <folder>` checks the finished file: 1920x1080 at 30 fps, as long as the voice, -15 to -13 LUFS, true peak at most -1 dBTP, no black stretch over 0.5 s, nothing still for 4 s (2 s is a warning), a real voice. Fix what fails and render again. `video facts <folder> --scope final` checks the words again with the YouTube text added; re-read and `record --scope final --result PASS`. Then show the person the video, the thumbnail and the YouTube text, and on their yes: `video approve <folder> final` (it needs the QA PASS and the final fact check, and it fingerprints the three files).
+14. **Upload.** `video youtube login` once (Google Cloud "Desktop app" client; the Reel Kit's docs/connect.md step 6B). Then `video youtube upload <folder>` is a dry run that lists every problem, including a missing final approval or a file changed since it; `--yes` sends it, private by default. Never make a video public without the person saying so. Never upload twice (the kit refuses without `--again`).
+15. **Tidy.** Once it is uploaded, `video tidy <folder>` lists the scene clips and joined copies that a render can make again (most of the folder's size); `--apply` deletes them. The words, research, plan, voice, approvals and out/ stay.
 
 ## Long videos
 
