@@ -17,6 +17,7 @@
 //   node video.mjs thumbnail <folder> [--at s | --scene n] out/thumbnail.jpg (1280x720) from a frame of the video
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
+//   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
 //   node video.mjs youtube <login|upload> ...              youtube.mjs
 import { spawnSync } from 'node:child_process';
@@ -61,32 +62,8 @@ const mediaLength = (f) => { const r = sh('ffprobe', ['-v', 'error', '-show_entr
 // research.md holds what the video may claim and where each fact comes from. `video new` writes the empty page below; the
 // voice (the first step that costs credits) refuses until the page has its marker removed and at least two sources, or until
 // video.json says why no research is needed ("no_research": "a bedtime story, nothing to check").
-const RESEARCH_MARK = '<!-- not researched yet -->';
-export const RESEARCH_PAGE = `# Research
-${RESEARCH_MARK}
-
-## The question
-What the video has to answer, in one sentence.
-
-## What was found
-- One fact per line, said plainly, with its source: [publisher, title](https://...)
-
-## Not sure or disputed
-- Claims the sources disagree on, or that only one weak source makes. These stay out of the video or are said as uncertain.
-
-## Sources
-1. [Title](https://...) by who, when published, when read
-`;
-export function researchState(dir, cfg = {}) {
-  if (cfg.no_research) return { ok: true, why: `no research needed: ${cfg.no_research}` };
-  const f = path.join(dir, 'research.md');
-  if (!fs.existsSync(f)) return { ok: false, why: 'research.md is missing' };
-  const text = fs.readFileSync(f, 'utf8');
-  if (text.includes(RESEARCH_MARK)) return { ok: false, why: 'research.md is still the empty page (remove the "not researched yet" line once it is done)' };
-  const links = new Set(text.match(/https?:\/\/[^\s)>\]]+/g) || []);
-  if (links.size < 2) return { ok: false, why: `research.md lists ${links.size} source link(s); at least 2 are needed` };
-  return { ok: true, why: `research.md: ${links.size} sources` };
-}
+export { RESEARCH_PAGE, researchState } from './checks.mjs';
+const { RESEARCH_PAGE, researchState } = checks;
 
 function newVideo(folder, flags) {
   const style = flags.style;
@@ -262,6 +239,41 @@ function factsCmd(loose, flags) {
   if (r.errors.length) process.exitCode = 1;
 }
 
+/* ── dashboard ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+// The page lives next to the videos: <brand>/videos/video-dashboard.html in a brand folder, else <folder>/video-dashboard.html.
+const PAGE = 'video-dashboard.html';
+function dashboardRoot(arg) {
+  const brand = checks.findBrand(arg ? path.resolve(arg) : process.cwd());
+  if (brand && (!arg || path.resolve(arg) === brand.dir)) return path.join(brand.dir, 'videos');
+  return path.resolve(arg || '.');
+}
+export async function drawDashboard(root, { credits = false, quiet = false } = {}) {
+  fs.mkdirSync(root, { recursive: true });
+  if (credits) {
+    const budget = path.join(REEL_ENGINE, 'tools', 'budget.py');
+    const r = fs.existsSync(budget) ? spawnSync(process.env.PYTHON || 'python3', [budget, '--left', '--json'], { encoding: 'utf8' }) : null;
+    let info = null; try { info = JSON.parse(r?.stdout || 'null'); } catch {}
+    if (info && Number.isFinite(info.left)) {
+      fs.mkdirSync(path.join(root, '.cache'), { recursive: true });
+      fs.writeFileSync(path.join(root, '.cache', 'video-credits.json'), JSON.stringify({ ...info, at: new Date().toLocaleString('sv-SE').slice(0, 16) }, null, 1) + '\n');
+    } else if (!quiet) console.log(`credits: could not read them (${info?.why || 'no budget tool or no key'})`);
+  }
+  const { load } = await import('../dashboard/model.mjs');
+  const { html } = await import('../dashboard/page.mjs');
+  const M = load(root, { pageDir: root });
+  const file = path.join(root, PAGE);
+  fs.writeFileSync(file, html(M));
+  if (!quiet) console.log(`dashboard: ${file} (${M.videos.length} video${M.videos.length === 1 ? '' : 's'}, ${M.needs.filter((n) => n.prio === 'now').length} need${M.needs.filter((n) => n.prio === 'now').length === 1 ? 's' : ''} you now)`);
+  return file;
+}
+// after a command changes a video, redraw the dashboard it shows on, if there is one (never fails the command)
+async function redrawFor(dir) {
+  try {
+    let d = path.dirname(path.resolve(dir));
+    for (let i = 0; i < 5; i++) { if (fs.existsSync(path.join(d, PAGE))) return await drawDashboard(d, { quiet: true }); const up = path.dirname(d); if (up === d) break; d = up; }
+  } catch {}
+}
+
 /* ── doctor ─────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 function doctor() {
   const ok = (b, text, fix) => console.log(`${b ? 'ok     ' : 'MISSING'} ${text}${!b && fix ? `  -> ${fix}` : ''}`);
@@ -322,10 +334,24 @@ async function main() {
     });
     case 'thumbnail': return run(() => thumbnail(openVideo(arg), flags));
     case 'doctor': return doctor();
+    case 'dashboard': return run(async () => {
+      const file = await drawDashboard(dashboardRoot(arg), { credits: Boolean(flags.credits) });
+      if (flags.open) spawnSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [file], { stdio: 'ignore' });
+    });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
-      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 21).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+      console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1, 22).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
       if (cmd) process.exitCode = 1;
   }
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+const CHANGES = new Set(['new', 'voice', 'stand-in', 'render', 'thumbnail', 'facts', 'approve', 'qa', 'tidy', 'youtube']);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const { loose } = parse(process.argv.slice(2));
+  Promise.resolve(main()).then(() => {
+    const target = loose[0] === 'youtube' ? loose[2] : loose[1];
+    if (CHANGES.has(loose[0]) && target) {
+      const brand = loose[0] === 'new' ? checks.findBrand(process.cwd()) : null;
+      return redrawFor(brand && !/[\\/]/.test(target) ? path.join(brand.dir, 'videos', target) : target);
+    }
+  });
+}

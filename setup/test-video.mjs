@@ -272,4 +272,46 @@ await test('video new inside a brand folder makes videos/<name>', () => {
   assert.match(r.stdout, /brand: Acme/);
 });
 
+
+await test('dashboard: each folder lands on the right step, and the person is asked only at their steps', async () => {
+  const { load } = await import('../studio/dashboard/model.mjs');
+  const root = tmp();
+  const mk = (name, files) => { const d = path.join(root, name); fs.mkdirSync(path.join(d, 'build'), { recursive: true }); fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: name })); for (const [f, body] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), body); } return d; };
+  const R = '# Research\n- a [a](https://example.org/a)\n- b [b](https://example.org/b)\n';
+  mk('a-research', { 'research.md': '# Research\n<!-- not researched yet -->\n' });
+  mk('b-map', { 'research.md': R, 'outline.md': '# Map\n' });
+  const c = mk('c-script', { 'research.md': R, 'outline.md': '# Map\n' }); checks.approve(c, 'map');
+  const u = mk('d-done', { 'research.md': R, 'out/youtube-published.json': JSON.stringify({ url: 'https://www.youtube.com/watch?v=x', privacy: 'private', at: '2026-11-12T10:00:00Z' }) });
+  const M = load(root);
+  const step = Object.fromEntries(M.videos.map((v) => [v.slug, v.step]));
+  assert.deepEqual(step, { 'a-research': 'research', 'b-map': 'map', 'c-script': 'script', 'd-done': 'done' });
+  assert.ok(M.needs.some((n) => n.video === 'b-map' && n.prio === 'now'), 'the map waits for the person');
+  assert.ok(!M.needs.some((n) => n.video === 'a-research' || n.video === 'c-script'), 'Claude\'s steps are not "needs you"');
+  assert.equal(M.stats.uploaded, 1);
+});
+
+await test('dashboard page: one file, no network requests, names escaped, accent kept readable', async () => {
+  const { load } = await import('../studio/dashboard/model.mjs');
+  const { html, palette, contrast } = await import('../studio/dashboard/page.mjs');
+  const root = tmp(), d = path.join(root, 'x'); fs.mkdirSync(d);
+  fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: 'clean-shapes', title: '<img src=x onerror=alert(1)>' }));
+  const page = html(load(root));
+  assert.ok(!page.includes('<img src=x'), 'a title is text, never markup');
+  assert.ok(!/(src|href)=["']?https?:/i.test(page.replace(/<script id="dash-data"[\s\S]*?<\/script>/, '')), 'nothing is loaded from the web');
+  assert.ok(/@font-face/.test(page) && /<dialog class="card"/.test(page));
+  const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  for (const a of ['#FFE600', '#E4572E', '#00FF00', '#111111']) { const P = palette(a); assert.ok(contrast(rgb(P.text), rgb('#EFEFEE')) >= 4.5, a); assert.ok(contrast(rgb(P.onNavy), rgb('#14142B')) >= 4.5, a); }
+});
+
+await test('video dashboard draws the page in a brand folder and redraws it after a change', () => {
+  const b = tmp(); fs.mkdirSync(path.join(b, 'brand')); fs.writeFileSync(path.join(b, 'brand', 'brand.json'), JSON.stringify({ name: 'Acme', colors: { accent: '#2255EE' } }));
+  const V = path.join(REPO, 'studio', 'tools', 'video.mjs');
+  const r = spawnSync(process.execPath, [V, 'dashboard'], { encoding: 'utf8', cwd: b });
+  assert.equal(r.status, 0, r.stderr);
+  const page = path.join(b, 'videos', 'video-dashboard.html');
+  assert.match(fs.readFileSync(page, 'utf8'), /Acme/);
+  spawnSync(process.execPath, [V, 'new', 'first', '--style', 'clean-shapes', '--title', 'First video'], { encoding: 'utf8', cwd: b });
+  assert.match(fs.readFileSync(page, 'utf8'), /First video/, 'the page was redrawn after video new');
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

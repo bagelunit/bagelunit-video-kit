@@ -23,4 +23,5 @@ Run it inside a BagelUnit Reel Kit brand folder and the video goes in `videos/<n
 | `studio/SKILL.md` | the work order Claude follows |
 | `studio/tools/` | `video.mjs` (commands), `scenes.mjs` (planner and renderer), `checks.mjs` (fact check, approvals, QA, tidy), `youtube.mjs` (sign-in and upload) |
 | `studio/styles/` | the 19 scene styles (wide), copied from the bagelunit-styles repo by its sync script |
+| `studio/dashboard/` | the video dashboard (`video dashboard`): what needs you, every video's step, a calendar, a card that plays each video |
 | `setup/` | installer, repo scan, tests |

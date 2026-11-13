@@ -57,6 +57,10 @@ Outside a brand folder the video stands alone and none of this applies.
 14. **Upload.** `video youtube login` once (Google Cloud "Desktop app" client; the Reel Kit's docs/connect.md step 6B). Then `video youtube upload <folder>` is a dry run that lists every problem, including a missing final approval or a file changed since it; `--yes` sends it, private by default. Never make a video public without the person saying so. Never upload twice (the kit refuses without `--again`).
 15. **Tidy.** Once it is uploaded, `video tidy <folder>` lists the scene clips and joined copies that a render can make again (most of the folder's size); `--apply` deletes them. The words, research, plan, voice, approvals and out/ stay.
 
+## The dashboard
+
+`video dashboard` draws the video dashboard: what needs the person, the numbers (in progress, uploaded, minutes, voice characters left, disk free), the work order with how many videos wait at each step, every video with its next command, a calendar (`"publish_on": "YYYY-MM-DD"` in video.json plans a date) and a card for each video that plays it. In a brand folder it is `videos/video-dashboard.html`, else `video-dashboard.html` in the folder given. Once it exists, every command that changes a video redraws it. `--credits` reads the ElevenLabs characters left (a free read of the person's own account; only when asked); `--open` opens it. Offer it after the first video is started, and point to it when the person asks what is going on.
+
 ## Long videos
 
 There is no length limit: the kit has planned an 80-minute video in under a second and renders scene by scene, so a long video only takes longer. Splitting into parts is a suggestion, never a rule; the person decides.

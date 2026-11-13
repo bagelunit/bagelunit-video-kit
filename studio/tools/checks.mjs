@@ -29,6 +29,38 @@ export function fingerprint(files) {
   return h.digest('hex').slice(0, 16);
 }
 
+/* ── research ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
+// research.md holds what the video may claim and where each fact comes from. `video new` writes the empty page below; the
+// voice refuses until the page has its marker removed and at least two sources, or until video.json says why no research
+// is needed ("no_research": "a bedtime story, nothing to check").
+const RESEARCH_MARK = '<!-- not researched yet -->';
+export const RESEARCH_PAGE = `# Research
+${RESEARCH_MARK}
+
+## The question
+What the video has to answer, in one sentence.
+
+## What was found
+- One fact per line, said plainly, with its source: [publisher, title](https://...)
+
+## Not sure or disputed
+- Claims the sources disagree on, or that only one weak source makes. These stay out of the video or are said as uncertain.
+
+## Sources
+1. [Title](https://...) by who, when published, when read
+`;
+export function researchState(dir, cfg = {}) {
+  if (cfg.no_research) return { ok: true, why: `no research needed: ${cfg.no_research}` };
+  const f = path.join(dir, 'research.md');
+  if (!fs.existsSync(f)) return { ok: false, why: 'research.md is missing' };
+  const text = fs.readFileSync(f, 'utf8');
+  if (text.includes(RESEARCH_MARK)) return { ok: false, why: 'research.md is still the empty page (remove the "not researched yet" line once it is done)' };
+  const links = new Set(text.match(/https?:\/\/[^\s)>\]]+/g) || []);
+  if (links.size < 2) return { ok: false, why: `research.md lists ${links.size} source link(s); at least 2 are needed` };
+  return { ok: true, why: `research.md: ${links.size} sources` };
+}
+
+
 /* ── the brand folder ───────────────────────────────────────────────────────────────────────────────────────────────── */
 // A video made inside a Reel Kit brand folder (videos/<slug> next to reels/) uses that brand: its voice, its cleared facts,
 // its "never say" list and its call to action. Outside one, the video stands alone.
