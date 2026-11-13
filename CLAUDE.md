@@ -7,7 +7,7 @@ This folder is the kit's source, not a place to make videos. Videos are made in 
 - **Point to the command.** Every next step names its command first: `bash setup/install.sh`, `/video-setup`, `node setup/new-workspace.mjs <folder>`, then in a channel folder `/bagelunit-video <topic>`, `/channel-setup`, `video dashboard --open`.
 - **Someone opens a session here without a clear task:** if `~/.claude/skills/bagelunit-video/SKILL.md` is missing, offer to set up the kit; if it exists, say in one or two lines that the next step is `/video-setup` (a folder for a new channel), unless they already have a channel folder, in which case they open Claude Code there.
 - **Making a video:** in a channel folder, never here and never in `template/`. If the person asks for a video here, run `/video-setup` first (or tell them to open Claude Code in their channel folder).
-- **Web steps go through the browser tool** (Claude in Chrome): Google Cloud and the YouTube sign-in (`SETUP.md` section 5). The person logs in and pastes each secret into the file Claude made and opened; Claude asks before anything paid or public and never types a password or a secret.
+- **Web steps go through the browser tool** (Claude in Chrome): Google Cloud and the YouTube sign-in (`SETUP.md` section 5). The person logs in, makes the clicks that are theirs (Google's agreements, Publish app, Allow) and downloads the client file; Claude moves that file into place without opening it, asks before anything paid or public and never types a password or a secret.
 
 ## Changing the kit
 

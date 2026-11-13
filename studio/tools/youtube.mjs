@@ -2,6 +2,8 @@
 // youtube.mjs · long-form upload to YouTube from this computer. No server: the video is sent straight from out/video.mp4.
 //
 //   node video.mjs youtube login [--slug name]                one-time sign-in in the browser (scope youtube.upload only)
+//   node video.mjs youtube login --client <downloaded.json> [--all]   installs Google's client file for this channel (--all: every
+//                                                             channel in channels.json), deletes the download, then signs in
 //   node video.mjs youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]
 //
 // upload is a DRY RUN until --yes: it prints the title, description, privacy, size and every problem, and sends nothing.
@@ -9,12 +11,15 @@
 //
 // Credentials (never printed, never committed): ~/.config/bagelunit-video/youtube-<slug>.json, {client_id, client_secret,
 // refresh_token}, readable by you only. The slug is "default" unless video.json "channel" or --slug says otherwise. The client
-// id and secret are a Google Cloud "Desktop app" OAuth client (Reel Kit docs/connect.md step 6B); if this file does not exist yet
-// the Reel Kit's youtube-<slug>.json in ~/.config/bagelunit-reels is read for them. Sign in once with `login`.
-// In Google's "Testing" state a sign-in ends after 7 days: put the consent screen In production (Reel Kit docs).
+// id and secret are a Google Cloud "Desktop app" OAuth client (the Video Kit's SETUP.md section 5); Google's downloaded client file
+// works as it is (its "installed" block). If this file does not exist yet the Reel Kit's youtube-<slug>.json in
+// ~/.config/bagelunit-reels is read for them. Sign in once with `login`.
+// In Google's "Testing" state a sign-in ends after 7 days, and it keeps that end after publishing: publish the app first.
 //
 // Never twice: the upload session address is saved to build/youtube-upload.json before any bytes go out; a run that finds it asks
 // YouTube how far it got instead of starting again; and once out/youtube-published.json exists a second upload needs --again.
+// Right channel: the upload permission cannot read which channel a sign-in is for, so after an upload the answer's channel id is
+// compared with youtube.channel_id in brand/brand.json; a mismatch is a loud warning and exit code 1 (the video stays private).
 // The project's daily upload quota is Google's to set (check it in Google Cloud); when it is used up YouTube says so and nothing is lost.
 import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -86,6 +91,41 @@ export function readCredentials(slug, { dir = CONFIG_DIR, reelDir = REEL_CONFIG 
   if (inner) cfg = { ...cfg, client_id: inner.client_id, client_secret: inner.client_secret };
   if (isPlaceholder(cfg.client_id) || isPlaceholder(cfg.client_secret)) throw new Plain(`${file} still needs client_id and client_secret (it holds the PASTE-... words or nothing).`);
   return { file, cfg };
+}
+
+// Google's downloaded client file ("Download JSON" on a Desktop app client) becomes the sign-in file of each channel given, readable
+// by you only. Nothing in it is printed. A sign-in already saved for the same client is kept; one for another client is dropped
+// (it would not work with the new client). The downloaded copy is deleted afterwards, so the secret is not left in Downloads; a file
+// in the kit's own config folder (another channel's sign-in file, for its client) is only read: its sign-in is never copied.
+export function installClient(src, slugs, { dir = CONFIG_DIR, remove = true } = {}) {
+  const raw = readJSON(src, null);
+  if (!raw || typeof raw !== 'object') throw new Plain(`${src} is not a client file from Google (it could not be read as JSON). Download it again: Clients, your Desktop app client, Download JSON.`);
+  if (raw.web && !raw.installed) throw new Plain(`${src} is for a "Web application" client. Make a "Desktop app" client instead (SETUP.md section 5, step 6) and download that one.`);
+  const inner = raw.installed || raw;
+  if (isPlaceholder(inner.client_id) || isPlaceholder(inner.client_secret)) throw new Plain(`${src} has no client_id and client_secret. Download it again: Clients, your Desktop app client, Download JSON.`);
+  const done = [];
+  for (const slug of [...new Set(slugs)]) {
+    const file = credentialsFile(slug, dir), old = readJSON(file, null);
+    const same = old && old.client_id === inner.client_id && !isPlaceholder(old.refresh_token);
+    writePrivate(file, { client_id: inner.client_id, client_secret: inner.client_secret, ...(same ? { refresh_token: old.refresh_token, scope: old.scope, signed_in_at: old.signed_in_at } : {}) });
+    done.push({ slug, file, signedIn: Boolean(same) });
+  }
+  const rel = path.relative(path.resolve(dir), path.resolve(src));
+  const inConfig = Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
+  const removed = remove && !inConfig;
+  if (removed) fs.rmSync(src, { force: true });
+  return Object.assign(done, { removed });
+}
+
+// every channel folder made by /video-setup (channels.json), by the slug in its brand.json today; folders that are gone are skipped
+export function registeredSlugs(registry = path.join(CONFIG_DIR, 'channels.json')) {
+  const out = [];
+  for (const c of readJSON(registry, []) || []) {
+    if (!c?.dir || !fs.existsSync(c.dir)) continue;
+    const slug = readJSON(path.join(c.dir, 'brand', 'brand.json'), {})?.slug || c.slug;
+    if (slug) out.push(slug);
+  }
+  return [...new Set(out)];
 }
 
 const openBrowser = (url) => {
@@ -235,12 +275,21 @@ export async function upload(dir, { privacy, yes = false, again = false, thumb =
   if (!resource) { log('sending the video...'); resource = await sendBytes(token, st.session, mp4, size, offset, fetchImpl); }
   if (!resource?.id) throw new Plain('YouTube took the upload but did not return the video id: check the channel before uploading again');
   const url = `https://www.youtube.com/watch?v=${resource.id}`;
+  const channelId = resource.snippet?.channelId || null;
+  const expected = String(brand?.cfg.youtube?.channel_id || '').trim();
+  const wrongChannel = Boolean(channelId && expected && channelId !== expected);
   fs.mkdirSync(path.join(dir, 'out'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'out', 'youtube-published.json'), JSON.stringify({ id: resource.id, url, privacy, at: new Date().toISOString() }, null, 2) + '\n');
+  fs.writeFileSync(path.join(dir, 'out', 'youtube-published.json'), JSON.stringify({ id: resource.id, url, privacy, ...(channelId ? { channel_id: channelId } : {}), ...(wrongChannel ? { wrong_channel: true } : {}), at: new Date().toISOString() }, null, 2) + '\n');
   fs.rmSync(stateFile, { force: true });
   log(`uploaded: ${url} (${privacy})`);
+  // The upload permission cannot read which channel a sign-in belongs to, so the answer is the first place a wrong pick shows.
+  if (wrongChannel) {
+    log(`\n!!! WRONG CHANNEL !!!\n!!! YouTube put this video on the channel ${channelId}, but brand/brand.json says this channel is ${expected}.\n!!! The video is ${privacy}. Delete it in YouTube Studio on that channel. Then, from this folder, sign in again (node video.mjs youtube login),\n!!! choose this channel or Brand Account, and upload again with --again. The thumbnail was not set.\n`);
+    return { id: resource.id, url, channelId, wrongChannel };
+  }
+  if (channelId && !expected) log(`channel: ${channelId}. Check in YouTube Studio that the video is on the right channel, then save this as youtube.channel_id in brand/brand.json: later uploads are checked against it.`);
   if (withThumb) { const w = await setThumbnail(token, resource.id, jpg, fetchImpl); log(w || 'thumbnail set'); }
-  return { id: resource.id, url };
+  return { id: resource.id, url, channelId, wrongChannel };
 }
 
 export async function cli(argv) {
@@ -249,13 +298,25 @@ export async function cli(argv) {
   try {
     if (loose[0] === 'login') {
       const b = findBrand(process.cwd()), slug = typeof flags.slug === 'string' ? flags.slug : b?.cfg.slug || 'default';
+      if (flags.client === true) throw new Plain('give the downloaded file: node video.mjs youtube login --client ~/Downloads/client_secret_<...>.json');
+      if (flags.all && typeof flags.client !== 'string') throw new Plain('--all goes with --client: node video.mjs youtube login --client <downloaded.json> --all');
+      if (typeof flags.client === 'string') {
+        const here = b || typeof flags.slug === 'string' ? [slug] : [];
+        const slugs = flags.all ? [...here, ...registeredSlugs()] : here;
+        if (!slugs.length) throw new Plain('not in a channel folder: run this from the channel\'s folder, or add --all for every channel made with /video-setup');
+        const done = installClient(path.resolve(flags.client.replace(/^~(?=$|\/)/, os.homedir())), slugs);
+        console.log(`client file installed for ${done.length} channel(s): ${done.map((d) => d.slug + (d.signedIn ? ' (already signed in)' : '')).join(', ')}. Readable by you only; nothing was printed${done.removed ? '; the downloaded copy was deleted' : ''}.`);
+        if (!here.length) { console.log('Now sign in each channel from its own folder: node video.mjs youtube login'); return done; }
+      }
       console.log(`signing in for the channel "${slug}"${b ? ` (${b.cfg.name || path.basename(b.dir)})` : ''}`);
       return await login({ slug });
     }
     if (loose[0] === 'upload') {
       if (!loose[1]) throw new Plain('give the video folder: node video.mjs youtube upload <folder>');
-      return await upload(path.resolve(loose[1]), { privacy: typeof flags.privacy === 'string' ? flags.privacy : undefined, yes: Boolean(flags.yes), again: Boolean(flags.again), thumb: !flags['no-thumbnail'], slug: typeof flags.slug === 'string' ? flags.slug : undefined });
+      const r = await upload(path.resolve(loose[1]), { privacy: typeof flags.privacy === 'string' ? flags.privacy : undefined, yes: Boolean(flags.yes), again: Boolean(flags.again), thumb: !flags['no-thumbnail'], slug: typeof flags.slug === 'string' ? flags.slug : undefined });
+      if (r?.wrongChannel) process.exitCode = 1;
+      return r;
     }
-    throw new Plain('usage: node video.mjs youtube login  |  youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]');
+    throw new Plain('usage: node video.mjs youtube login [--client <downloaded.json> [--all]]  |  youtube upload <folder> [--privacy private|unlisted|public] [--yes] [--again] [--no-thumbnail]');
   } catch (e) { console.error(e instanceof Plain ? e.message : `Unexpected error: ${e?.message || e}`); process.exitCode = 1; }
 }

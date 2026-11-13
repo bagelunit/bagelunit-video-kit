@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Tests for the Video Kit that need no key, no network and no browser: script chunking, chapters, YouTube text and
-// limits, the upload flow against a fake YouTube (dry run, session saved first, resume, never twice, stand-in refused),
+// limits, the upload flow against a fake YouTube (dry run, session saved first, resume, never twice, stand-in refused, the
+// right channel), installing Google's client file,
 // and that the synced styles are wide and match their fingerprints. Run: node setup/test-video.mjs
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -69,16 +70,17 @@ const fakeFolder = ({ standIn = false, approved = true } = {}) => {
   return d;
 };
 const cred = () => { const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-default.json'), JSON.stringify({ client_id: 'id', client_secret: 'secret-xyz', refresh_token: 'rt' })); return c; };
-function fakeYouTube({ cut = false } = {}) {
+function fakeYouTube({ cut = false, channel = null } = {}) {
+  const video = JSON.stringify({ id: 'vid1', ...(channel ? { snippet: { channelId: channel } } : {}) });
   const calls = [];
   const fetchImpl = async (url, init = {}) => {
     const u = String(url); calls.push({ url: u, method: init.method, body: init.body });
     if (u.includes('oauth2.googleapis.com/token')) return new Response(JSON.stringify({ access_token: 'at' }), { status: 200 });
     if (u.includes('uploadType=resumable')) return new Response('{}', { status: 200, headers: { location: 'https://upload.example/session1' } });
     if (u.startsWith('https://upload.example/')) {
-      if (init.headers?.['Content-Range']?.startsWith('bytes */')) return cut ? new Response('', { status: 308, headers: { range: 'bytes=0-1999' } }) : new Response(JSON.stringify({ id: 'vid1' }), { status: 200 });
+      if (init.headers?.['Content-Range']?.startsWith('bytes */')) return cut ? new Response('', { status: 308, headers: { range: 'bytes=0-1999' } }) : new Response(video, { status: 200 });
       if (init.body && typeof init.body.on === 'function') { for await (const _ of init.body) {} }
-      return new Response(JSON.stringify({ id: 'vid1' }), { status: 200 });
+      return new Response(video, { status: 200 });
     }
     if (u.includes('thumbnails/set')) return new Response('{}', { status: 200 });
     return new Response('{}', { status: 404 });
@@ -124,6 +126,64 @@ await test('missing credentials make a PASTE file and say so; secrets never appe
   assert.throws(() => yt.readCredentials('default', { dir: c, reelDir: r }), (e) => !/secret-xyz/.test(e.message) && /still needs/.test(e.message));
   fs.writeFileSync(path.join(r, 'youtube-x.json'), JSON.stringify({ client_id: 'cid', client_secret: 'cs' }));
   assert.equal(yt.readCredentials('x', { dir: c, reelDir: r }).cfg.client_id, 'cid');   // borrowed from the Reel Kit file
+});
+
+await test('login --client: Google\'s downloaded file becomes each channel\'s sign-in file, private, nothing printed, download deleted', () => {
+  const c = tmp(), dl = tmp(), src = path.join(dl, 'client_secret_123.apps.googleusercontent.com.json');
+  const google = { installed: { client_id: 'cid-1', project_id: 'p', auth_uri: 'https://accounts.google.com/o/oauth2/auth', client_secret: 'secret-xyz', redirect_uris: ['http://localhost'] } };
+  fs.writeFileSync(src, JSON.stringify(google));
+  fs.writeFileSync(path.join(c, 'youtube-old.json'), JSON.stringify({ client_id: 'cid-1', client_secret: 'secret-xyz', refresh_token: 'rt-old' }));
+  fs.writeFileSync(path.join(c, 'youtube-other.json'), JSON.stringify({ client_id: 'cid-0', client_secret: 's0', refresh_token: 'rt-0' }));
+  const done = yt.installClient(src, ['space', 'old', 'other', 'space'], { dir: c });
+  assert.deepEqual(done.map((d) => [d.slug, d.signedIn]), [['space', false], ['old', true], ['other', false]]);
+  assert.equal(done.removed, true); assert.ok(!fs.existsSync(src), 'the download is deleted');
+  const space = JSON.parse(fs.readFileSync(path.join(c, 'youtube-space.json'), 'utf8'));
+  assert.deepEqual(space, { client_id: 'cid-1', client_secret: 'secret-xyz' });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(c, 'youtube-old.json'), 'utf8')).refresh_token, 'rt-old', 'same client: the sign-in is kept');
+  assert.ok(!('refresh_token' in JSON.parse(fs.readFileSync(path.join(c, 'youtube-other.json'), 'utf8'))), 'another client: its sign-in is dropped');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(c, 'youtube-space.json')).mode & 0o777, 0o600);
+  assert.equal(yt.readCredentials('space', { dir: c, reelDir: tmp() }).cfg.client_id, 'cid-1');
+  // another channel's sign-in file as the source: only the client is taken, the file stays
+  const r = yt.installClient(path.join(c, 'youtube-old.json'), ['newer'], { dir: c });
+  assert.equal(r.removed, false); assert.ok(fs.existsSync(path.join(c, 'youtube-old.json')));
+  assert.ok(!('refresh_token' in JSON.parse(fs.readFileSync(path.join(c, 'youtube-newer.json'), 'utf8'))), 'never another channel\'s sign-in');
+  // the wrong kind of file, said without the secret
+  const web = path.join(dl, 'web.json'); fs.writeFileSync(web, JSON.stringify({ web: { client_id: 'w', client_secret: 'secret-xyz' } }));
+  assert.throws(() => yt.installClient(web, ['x'], { dir: c }), (e) => /Desktop app/.test(e.message) && !/secret-xyz/.test(e.message));
+  const blank = path.join(dl, 'blank.json'); fs.writeFileSync(blank, JSON.stringify({ installed: { client_id: 'PASTE-CLIENT-ID-HERE' } }));
+  assert.throws(() => yt.installClient(blank, ['x'], { dir: c }), /no client_id/);
+  assert.ok(fs.existsSync(web) && !fs.existsSync(path.join(c, 'youtube-x.json')), 'nothing written or deleted on a refusal');
+});
+
+await test('--all reads every registered channel by the slug in its brand.json today; folders that are gone are skipped', () => {
+  const a = tmp(), b = tmp(), reg = path.join(tmp(), 'channels.json');
+  fs.mkdirSync(path.join(a, 'brand')); fs.writeFileSync(path.join(a, 'brand', 'brand.json'), JSON.stringify({ slug: 'renamed' }));
+  fs.writeFileSync(reg, JSON.stringify([{ slug: 'first', dir: a }, { slug: 'second', dir: b }, { slug: 'gone', dir: path.join(b, 'nope') }]));
+  assert.deepEqual(yt.registeredSlugs(reg), ['renamed', 'second']);
+  assert.deepEqual(yt.registeredSlugs(path.join(tmp(), 'none.json')), []);
+});
+
+await test('after an upload the channel is checked: a wrong Brand Account is a loud warning, no thumbnail; none saved yet prints it', async () => {
+  const setup = (channelId) => {
+    const ch = tmp(); fs.mkdirSync(path.join(ch, 'brand')); fs.mkdirSync(path.join(ch, 'videos'));
+    fs.writeFileSync(path.join(ch, 'brand', 'brand.json'), JSON.stringify({ name: 'Space', slug: 'space', youtube: { privacy: 'private', channel_id: channelId } }));
+    const v = path.join(ch, 'videos', 'v1'); fs.cpSync(fakeFolder(), v, { recursive: true });
+    fs.writeFileSync(path.join(v, 'out', 'thumbnail.jpg'), 'jpg'); approveFinal(v);
+    const c = tmp(); fs.writeFileSync(path.join(c, 'youtube-space.json'), JSON.stringify({ client_id: 'id', client_secret: 's', refresh_token: 'rt' }));
+    return { v, c };
+  };
+  let s = setup('UCright'), f = fakeYouTube({ channel: 'UCwrong' }), lines = [];
+  let r = await yt.upload(s.v, { yes: true, fetchImpl: f.fetchImpl, credDir: s.c, log: (x) => lines.push(x) });
+  assert.equal(r.wrongChannel, true); assert.ok(lines.join('\n').includes('WRONG CHANNEL') && lines.join('\n').includes('UCright'));
+  assert.ok(!f.calls.some((x) => x.url.includes('thumbnails')), 'no thumbnail on the wrong channel');
+  const pub = JSON.parse(fs.readFileSync(path.join(s.v, 'out', 'youtube-published.json'), 'utf8'));
+  assert.equal(pub.channel_id, 'UCwrong'); assert.equal(pub.wrong_channel, true);
+  s = setup('UCright'); f = fakeYouTube({ channel: 'UCright' }); lines = [];
+  r = await yt.upload(s.v, { yes: true, fetchImpl: f.fetchImpl, credDir: s.c, log: (x) => lines.push(x) });
+  assert.equal(r.wrongChannel, false); assert.ok(!lines.join('\n').includes('WRONG')); assert.ok(f.calls.some((x) => x.url.includes('thumbnails')));
+  s = setup(''); f = fakeYouTube({ channel: 'UCfirst' }); lines = [];
+  r = await yt.upload(s.v, { yes: true, fetchImpl: f.fetchImpl, credDir: s.c, log: (x) => lines.push(x) });
+  assert.equal(r.wrongChannel, false); assert.ok(lines.some((x) => x.includes('UCfirst') && x.includes('youtube.channel_id')));
 });
 
 await test('styles are wide, registered, and every file matches its fingerprint', () => {

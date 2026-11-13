@@ -29,7 +29,7 @@ At the start of a session, read `brand/brand.json`. If `"name"` is empty, the ch
 
 ## 3. YouTube
 
-- **One sign-in per channel.** From this folder, `video youtube login` signs in the Google account that owns this channel and saves it under this channel's slug (`~/.config/bagelunit-video/youtube-<slug>.json`, never printed). The steps for the Google Cloud client are in the kit's `SETUP.md` section 5. Web steps are done in the owner's browser with Claude in Chrome: the owner logs in and pastes the secrets into the file Claude opened; Claude never types a password or a secret.
+- **One sign-in per channel.** From this folder, `video youtube login` signs in the Google account that owns this channel and saves it under this channel's slug (`~/.config/bagelunit-video/youtube-<slug>.json`, never printed). The steps for the Google Cloud client are in the kit's `SETUP.md` section 5. Web steps are done in the owner's browser with Claude in Chrome: the owner logs in, makes the clicks that are theirs and downloads Google's client file, which Claude moves into place without opening it; Claude never types a password or a secret.
 - **Uploads are private by default** (`youtube.privacy` in brand.json, or `"privacy"` in a video's video.json). Making a video public, unlisted or scheduled is always the owner's say-so. The upload is a dry run until `--yes`, needs the final approval of the exact files, and never sends the same video twice.
 
 ## 4. Rules that always stay on

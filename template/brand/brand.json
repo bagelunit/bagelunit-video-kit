@@ -9,6 +9,7 @@
   "youtube": {
     "channel_name": "",
     "handle": "",
+    "channel_id": "",
     "privacy": "private"
   },
   "colors": {

@@ -52,20 +52,47 @@ To carry on with a video later: `/bagelunit-video <video name>`. To see everythi
 
 ## 5. Connect YouTube (once per channel)
 
-The upload goes straight from your computer to YouTube through YouTube's own API. It needs a Google Cloud project of yours (free) and a one-time sign-in per channel. With Claude in Chrome turned on, Claude does each page in your browser; you log in, paste the two values into the file Claude opens, and click Allow. Without it, do the same clicks yourself.
+The upload goes straight from your computer to YouTube through YouTube's own API. It needs a Google Cloud project of yours (free), a client file from it, and a one-time sign-in per channel. Publishing the app (recommended, step 4) also needs a website of yours for a home page and a privacy page. With Claude in Chrome turned on, Claude does each page in your browser; you log in, tick Google's agreements, click Publish, download the client file and choose the channel. Without it, do the same clicks yourself.
 
-1. **A Google Cloud project.** console.cloud.google.com, New project (any name). Then APIs and Services, Library, **YouTube Data API v3**, Enable.
-2. **The consent screen** (Google Auth Platform, Get started). An app name and your email, then the audience: **External** (Internal only lets in accounts of the same Google Workspace organization, and the channel is often on another account). Agreeing to Google's terms is your click.
-3. **Test user.** Audience, Test users, add the Google account that owns the channel.
-4. **The client.** Clients, Create client, application type **Desktop app**. Google shows a client id and a secret.
-5. **The file.** In the channel folder run `video youtube login`. The first time, it makes `~/.config/bagelunit-video/youtube-<channel slug>.json` with `PASTE-...` in place of the two values. Paste the client id and secret there (Claude opens the file for you and never reads the secret), save it.
-6. **Sign in.** Run `video youtube login` again when you are at the screen (it waits 5 minutes). Choose the channel's Google account, click through "Google hasn't verified this app" (Advanced, continue: it is your own app) and Allow. The sign-in is saved in that file and never printed.
+Do the steps in this order. Publishing (step 4) before anyone signs in (step 7) means each channel signs in once, not twice.
 
-**Every 7 days, or once for good.** While the app is in Testing, Google ends the sign-in after 7 days and step 6 has to be run again. To stop that, publish the app (Audience, Publish app); Google then asks for a homepage and a privacy policy page on a domain you own (your channel's or business's website). Publishing the app is public, so it is your decision.
+1. **A Google Cloud project.** console.cloud.google.com/projectcreate, any name. The project ID is made from the name and cannot be changed later. Google may first ask you to type your password again ("Verify it's you"). One project can serve several channels and several Google accounts; keep separate brands in separate projects (each project has its own consent screen and its own daily limit, step 9).
+2. **The YouTube Data API v3.** console.cloud.google.com/apis/library/youtube.googleapis.com?project=<project ID>, Enable. Enabling it means agreeing to the YouTube API Services terms, so that click is yours. The page then says Enabled.
+3. **The consent screen.** Google Auth Platform (console.cloud.google.com/auth/overview?project=<project ID>), Get started:
+   - **App name:** anything, for example "<your brand> Uploader".
+   - **User support email:** the list offers only the signed-in account and the Google Groups it manages.
+   - **Audience: External** (recommended). It works with YouTube Brand Accounts: the sign-in lists the owner's account and every Brand Account channel. Internal works only for accounts in the same Google Workspace organization; it needs no privacy page and never signs you out after 7 days, but it cannot be published and may refuse Brand Accounts.
+   - **Contact information:** type the developer email, then press Enter so it becomes a chip, then Next.
+   - **Finish:** tick "I agree to the Google API Services: User Data Policy" (your click), Continue, then the blue **Create** button at the bottom.
+   - **Check that it saved.** Open Audience: it must say **Testing** and **External**. On our first try it did not save (Overview still said "not configured yet"). If that happens, fill it in again, and turn off any content blocker for the page (ours had blocked www.gstatic.com).
+4. **Branding, then publish, before anyone signs in.**
+   - **Branding** (console.cloud.google.com/auth/branding?project=<project ID>): the application home page (your channel's or business's website) and the privacy policy link (a page on that site, see "The privacy page" below). "Missing domain: <domain>" appears: Add domain, type the domain, then Save, and wait for "Branding changes saved!". Do not upload a logo: a logo makes Google review the app before it works.
+   - **Publish:** Audience, **Publish app** (it can be clicked only once Branding is saved), then Confirm on "Push to production?". The status becomes "In production".
+   - The app works without Google's review: the sign-in shows an "unverified app" warning, and up to 100 accounts can use it. Uploading (the youtube.upload scope) is a sensitive scope, not a restricted one, so no review is needed to upload to your own channels.
+   - Publishing is public, so it is your decision. If you keep the app in Testing, add a test user (step 5) and sign in again every 7 days.
+   - **Why before sign-in:** a sign-in made while the app is in Testing keeps its 7-day end even after you publish. Every channel then has to sign in again.
+5. **Test users (only if the app stays in Testing).** Audience, Test users, Add users: the Google account that owns the channel or channels, then Save. The first Save click may not register: check that the account appears in the list.
+6. **The client file.** Clients, Create client, application type **Desktop app**, any name. Leave "Use this client for an AI-powered agent" unticked. Create. In the dialog click **Download JSON** (do not copy the secret out of the dialog), then OK. Claude never opens or screenshots that dialog or that file. Then, in the channel's folder:
 
-**Another channel** on another Google account: run `video youtube login` in that channel's folder; it is saved under that channel's slug. Two channels can use the same Google Cloud client: copy the client id and secret into the new channel's file.
+   ```
+   video youtube login --client ~/Downloads/client_secret_<...>.json
+   ```
 
-**Long videos:** YouTube lets an account that is not verified upload up to 15 minutes. Verify it once at youtube.com/verify (a phone number) to upload up to 12 hours.
+   It checks the file without printing it, saves it as this channel's sign-in file (`~/.config/bagelunit-video/youtube-<channel slug>.json`, readable by you only), deletes the copy in Downloads and goes straight on to step 7. Add `--all` to install the same file for every channel made with `/video-setup` (several channels on one project; each still signs in on its own). If several `client_secret_` files are in Downloads, use the newest: an older one may be from another project. Without the downloaded file, `video youtube login` makes the sign-in file with `PASTE-...` in place of the client id and secret, for you to paste them in.
+7. **Sign in, one channel at a time.** In that channel's folder run `video youtube login` (after `--client`, it has already started). It opens the sign-in page and waits 5 minutes.
+   - Choose the Google account that owns the channel.
+   - In "Choose your account or a brand account", choose this channel. If two start with the same letter, tell them apart by the colour or picture of their icon.
+   - On "Google hasn't verified this app": Advanced, "Go to <app name> (unsafe)" (it is your own app), then Continue.
+   - The terminal says "Signed in". The sign-in is saved in the channel's file, readable by you only, and never printed. Then the next channel, from its own folder.
+   - **"nobody signed in within 5 minutes":** nothing was saved. Close the old sign-in tab (the address it answers to is gone) and run `video youtube login` again.
+8. **Check each channel's first upload.** The upload permission cannot read which channel a sign-in belongs to, so the right Brand Account is checked after the upload, against `youtube.channel_id` in the channel's `brand/brand.json` (asked by `/channel-setup`; it starts with UC, and youtube.com/account_advanced shows it while you are switched to that channel). If YouTube puts the video on another channel, the upload ends with a loud WRONG CHANNEL warning: delete the video in YouTube Studio on that channel, sign in again (step 7) and upload again with `--again`. If the ID is not saved yet, the upload prints the channel it went to: keep that first upload private (the default), find it in the right channel's YouTube Studio, then save the ID.
+9. **Limits.** A project gets about 10,000 API units a day and an upload costs about 1,600 (the thumbnail 50 more), so about 6 uploads a day per project, shared by every channel on it. When it is used up, the upload says so; try again the next day. An account that is not phone-verified can upload up to 15 minutes: verify it once at youtube.com/verify to upload up to 12 hours.
+
+**The privacy page.** YouTube's API policies want the privacy page to say that the app uses YouTube API Services, link the Google Privacy Policy (policies.google.com/privacy), say what data the app accesses, stores and shares, give the link where access can be taken back (security.google.com/settings/security/permissions), and give a way to ask for deletion. A deletion request must be acted on within 7 days. Give the part its own heading so the branding link can point straight at it (for example `/privacy#youtube`). An example, to change to your own words and address:
+
+> **YouTube uploads.** Our upload tool uses YouTube API Services to upload videos to our own YouTube channels. It asks Google only for permission to upload videos. It does not read, store or share any other YouTube or Google account data. The sign-in Google gives it is stored on our own computer, readable only by us, and is never shared. Google's Privacy Policy: https://policies.google.com/privacy. You can take back the tool's access at any time at https://security.google.com/settings/security/permissions. To ask us to delete any data the tool holds, write to <your email address>; we act on it within 7 days.
+
+**Another channel later.** Same brand: Google shows the client file only once, so take the client from a channel that has it. In the new channel's folder, `video youtube login --client ~/.config/bagelunit-video/youtube-<existing slug>.json`: it copies only the client (never that channel's sign-in) and leaves that file as it is, then step 7. Another brand: its own project, steps 1 to 8.
 
 ## 6. The dashboard
 

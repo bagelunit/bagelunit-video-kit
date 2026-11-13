@@ -38,8 +38,8 @@ Most of the time you only need three: `/video-setup` (once per channel, in this 
 | `video render <video> [--scene n] [--force]` | Renders the changed scenes, joins them, mixes voice, music and sound effects: `out/video.mp4` and the chapters. |
 | `video thumbnail <video> [--text "WORDS *ONE*"] [--name b \| --use b]` | The thumbnail (1280x720): a frame, with words in heavy capitals; versions for YouTube's thumbnail test. |
 | `video qa <video>` | Checks the finished file: size, frame rate, length, loudness, black or still stretches, a real voice. |
-| `video youtube login` | Signs in this channel's YouTube account (once per channel; SETUP.md section 5). |
-| `video youtube upload <video> [--yes] [--privacy private\|unlisted\|public]` | A dry run that lists every problem; `--yes` uploads it (private by default), sets the thumbnail, and never sends the same video twice. |
+| `video youtube login [--client <downloaded.json> [--all]]` | Signs in this channel's YouTube account (once per channel; SETUP.md section 5). `--client` first installs Google's downloaded client file for this channel (`--all`: for every channel) and deletes the download. |
+| `video youtube upload <video> [--yes] [--privacy private\|unlisted\|public]` | A dry run that lists every problem; `--yes` uploads it (private by default), sets the thumbnail, never sends the same video twice, and warns loudly if YouTube put it on a channel other than `youtube.channel_id`. |
 | `video reels <video> [--pick 3-5] [--apply]` | Suggests the stretches that would stand alone as reels; makes Reel Kit reel folders from the ones you pick. |
 | `video dashboard [--credits] [--open]` | Draws the channel's dashboard; `--credits` reads your ElevenLabs characters left. |
 | `video tidy <video> [--apply]` | Lists, then removes, the build files a render can make again (most of a video's size). |

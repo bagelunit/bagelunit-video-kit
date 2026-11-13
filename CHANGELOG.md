@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+**Connecting YouTube, rewritten from a real setup** (SETUP.md section 5)
+- The steps follow a real setup of six Brand Account channels on one Google account: the project, the API, the consent screen, branding, publishing, the client file, the sign-in, the first-upload check and the limits, in that order.
+- Publish the app before anyone signs in: a sign-in made in Testing keeps its 7-day end even after publishing.
+- External, not Internal, for YouTube Brand Accounts; check that the consent screen saved ("Testing" and "External") before going on.
+- Download Google's client file instead of pasting the secret; the kit reads it as it is. One file can serve every channel on the project.
+- `video youtube login --client <downloaded.json>` installs Google's client file as this channel's sign-in file, readable by you only, without printing it, deletes the download and signs in. `--all` installs it for every channel made with `/video-setup`. Given another channel's sign-in file, it takes only the client, never that channel's sign-in.
+- What the privacy page needs, with an example.
+- The right channel, checked after every upload: the upload permission cannot tell which channel a sign-in belongs to, so YouTube's answer is compared with the new `youtube.channel_id` in `brand/brand.json` (asked by `/channel-setup`). A wrong Brand Account ends with a loud WRONG CHANNEL warning and exit code 1, and the thumbnail is not set. With no ID saved yet, the upload prints the channel it went to.
+- The daily limit: about 6 uploads a day per project, shared by every channel on it.
+
 ## 1.0.0 (12 November 2026): the first public release
 
 Make YouTube videos with Claude Code, long or standard, at 1920x1080. It needs the BagelUnit Reel Kit installed first.
