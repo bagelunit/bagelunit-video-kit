@@ -319,6 +319,38 @@ function standInActive(dir) {
   return Boolean(note && fs.existsSync(vo) && note.sha === sha(fs.readFileSync(vo)));
 }
 
+/* ── sound effects ─────────────────────────────────────────────────────────────────────────────── */
+// video.json "sfx": "chapters" (default: a whoosh as each chapter starts), "scenes" (also a soft swoosh on every cut) or
+// "off". A scene can ask for its own: "sfx": "pop" (at its start) or [{"at": 1.2, "name": "pop", "gain": -3}] (seconds into
+// the scene). Names are the Reel Kit sound bank's: whoosh swoosh pop click tick thud impact boom shimmer riser type cash stamp.
+// long videos are calmer than reels, so the effects that remain are lifted above the Reel Kit's level to be heard
+const SFX_GAIN = 9;
+export function sfxCues(items, cfg = {}) {
+  const mode = String(cfg.sfx ?? 'chapters');
+  if (mode === 'off' || cfg.sfx === false) return [];
+  const cues = [];
+  items.forEach((it, i) => {
+    const t0 = it.time.t0;
+    if (i > 0 && it.scene.chapter) cues.push({ t: Math.max(0, t0 - 0.12), name: 'whoosh', gain: -2 });
+    else if (i > 0 && mode === 'scenes') cues.push({ t: Math.max(0, t0 - 0.08), name: 'swoosh', gain: -6 });
+    const own = typeof it.scene.sfx === 'string' ? [{ at: 0, name: it.scene.sfx }] : Array.isArray(it.scene.sfx) ? it.scene.sfx : [];
+    for (const c of own) if (c && c.name) cues.push({ t: t0 + Math.max(0, Number(c.at) || 0), name: String(c.name), gain: Math.min(0, Number(c.gain) || 0) });
+  });
+  return cues.sort((a, b) => a.t - b.t);
+}
+
+function sfxTrack(reel, items, seconds) {
+  const cues = sfxCues(items, reel.cfg);
+  const build = path.join(reel.dir, 'build'), out = path.join(build, 'sfx.wav'), list = path.join(build, 'sfx.json');
+  fs.rmSync(out, { force: true });
+  if (!cues.length) return null;
+  fs.writeFileSync(list, JSON.stringify(cues, null, 1));
+  const r = spawnSync(process.env.PYTHON || 'python3', [path.join(SKILL, 'tools', 'sfx.py'), list, seconds.toFixed(3), out, String(Number(reel.cfg.sfx_gain ?? SFX_GAIN))], { encoding: 'utf8' });
+  if (r.status !== 0 || !fs.existsSync(out)) { console.log(`note: no sound effects this time (${(r.stderr || '').trim().split('\n').pop() || 'sfx.py failed'})`); return null; }
+  console.log((r.stdout || '').trim());
+  return out;
+}
+
 /* ── video render <dir> ─────────────────────────────────────────────────────────────────────────────── */
 export async function renderScenes(reel, { only = null, force = false } = {}) {
   const began = Date.now();
@@ -376,12 +408,23 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   const music = reel.cfg.music ? path.resolve(reel.dir, String(reel.cfg.music)) : null;
   if (music && !fs.existsSync(music)) throw new Error(`video.json "music" points at ${music}, which does not exist`);
   const vol = Number(reel.cfg.music_volume ?? 0.18);
+  const stereo = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
+  const out = ['-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video];
   if (!prep.vo) ffmpeg(['-i', joined, '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
-  else if (music) ffmpeg(['-i', joined, '-i', prep.vo, '-stream_loop', '-1', '-i', music, '-filter_complex',
-    `${voice},asplit=2[voice][sc];[2:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${vol}[music];[music][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked];[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,${norm}[a]`,
-    '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
-  else ffmpeg(['-i', joined, '-i', prep.vo, '-filter_complex', `${voice},${norm}[a]`, '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
-    '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
+  else {
+    // the voice, the music ducked under it, and the effects track, then the whole mix to -14 LUFS
+    const inputs = ['-i', joined, '-i', prep.vo];
+    let graph, mixIns;
+    if (music) {
+      inputs.push('-stream_loop', '-1', '-i', music);
+      graph = `${voice},asplit=2[voice][sc];[2:a]${stereo},volume=${vol}[music];[music][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked]`;
+      mixIns = ['[voice]', '[ducked]'];
+    } else { graph = `${voice}[voice]`; mixIns = ['[voice]']; }
+    const sfx = sfxTrack(reel, items, seconds);
+    if (sfx) { inputs.push('-i', sfx); graph += `;[${inputs.filter((x) => x === '-i').length - 1}:a]${stereo}[sfx]`; mixIns.push('[sfx]'); }
+    graph += `;${mixIns.join('')}${mixIns.length > 1 ? `amix=inputs=${mixIns.length}:duration=first:dropout_transition=0:normalize=0,` : ''}${norm}[a]`;
+    ffmpeg([...inputs, '-filter_complex', graph, ...out]);
+  }
   ffmpeg(['-i', video, '-vf', 'scale=960:540:flags=lanczos', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', draft]);
   fs.rmSync(joined, { force: true }); fs.rmSync(list, { force: true });
 

@@ -314,4 +314,14 @@ await test('video dashboard draws the page in a brand folder and redraws it afte
   assert.match(fs.readFileSync(page, 'utf8'), /First video/, 'the page was redrawn after video new');
 });
 
+
+await test('sound effects: a whoosh per chapter by default, cuts only when asked, a scene\'s own cues, off means none', () => {
+  const items = [{ time: { t0: 0 }, scene: { chapter: 'A' } }, { time: { t0: 8 }, scene: {} }, { time: { t0: 16 }, scene: { chapter: 'B', sfx: [{ at: 2, name: 'pop', gain: 3 }] } }, { time: { t0: 30 }, scene: { sfx: 'boom' } }];
+  const names = (cfg) => scenes.sfxCues(items, cfg).map((c) => `${c.name}@${c.t.toFixed(2)}`);
+  assert.deepEqual(names({}), ['whoosh@15.88', 'pop@18.00', 'boom@30.00']);
+  assert.deepEqual(names({ sfx: 'scenes' }), ['swoosh@7.92', 'whoosh@15.88', 'pop@18.00', 'swoosh@29.92', 'boom@30.00']);
+  assert.deepEqual(names({ sfx: 'off' }), []);
+  assert.ok(scenes.sfxCues(items, {}).every((c) => c.gain <= 0), 'a scene cannot push an effect over the house level');
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');
