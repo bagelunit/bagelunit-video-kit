@@ -324,4 +324,12 @@ await test('sound effects: a whoosh per chapter by default, cuts only when asked
   assert.ok(scenes.sfxCues(items, {}).every((c) => c.gain <= 0), 'a scene cannot push an effect over the house level');
 });
 
+
+await test('thumbnail words: 2 to 5 of them, and not a copy of the title', async () => {
+  const { thumbnailNotes } = await import('../studio/tools/video.mjs');
+  assert.deepEqual(thumbnailNotes('Jupiter eats *Earth*', 'How big is Jupiter, really?'), []);
+  assert.ok(thumbnailNotes('one two three four five six', '').some((n) => /6 words/.test(n)));
+  assert.ok(thumbnailNotes('How big is Jupiter', 'How big is Jupiter, really?').some((n) => /repeats the title/.test(n)));
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

@@ -14,7 +14,7 @@
 //   node video.mjs check <folder> [--only n]               every scene: errors, safe area, seeking, stills to look at
 //   node video.mjs render <folder> [--scene n] [--force]   render changed scenes, join them, mix the voice: out/video.mp4
 //   node video.mjs chapters <folder>                       out/chapters.txt (YouTube chapters) from the scenes' "chapter"
-//   node video.mjs thumbnail <folder> [--at s | --scene n] out/thumbnail.jpg (1280x720) from a frame of the video
+//   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--name b | --use b]  out/thumbnail.jpg (1280x720)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
@@ -205,7 +205,40 @@ function chapters(video) {
 }
 
 /* ── thumbnail ──────────────────────────────────────────────────────────────────────────────────────────────────────── */
+// out/thumbnail.jpg (1280x720): a frame of the video, and with --text the words drawn over it (heavy condensed capitals,
+// one *word* in the accent colour, a dark wash behind them so they read at phone size). --name b writes a version to
+// out/thumbnails/b.jpg instead (for YouTube's thumbnail test); --use b makes that version the thumbnail that is uploaded.
+export function thumbnailNotes(text, title = '') {
+  const notes = [];
+  const words = String(text).replace(/\*/g, '').trim().split(/\s+/).filter(Boolean);
+  if (words.length > 5) notes.push(`${words.length} words on the thumbnail: 2 to 5 read at phone size`);
+  const t = new Set(String(title).toLowerCase().match(/[a-z0-9']+/g) || []);
+  const same = words.filter((w) => t.has(w.toLowerCase().replace(/[^a-z0-9']/g, ''))).length;
+  if (words.length && same / words.length > 0.5) notes.push('the thumbnail repeats the title: let it add something the title does not say');
+  return notes;
+}
+function thumbPage(frame, text, { accent, font, side }) {
+  const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const words = esc(text).replace(/\*([^*]+)\*/g, '<b>$1</b>');
+  return `<!DOCTYPE html><html><head><style>${font ? `@font-face{font-family:T;src:url(${font})}` : ''}
+html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:#000}
+.f{position:absolute;inset:0;background:url(${frame}) center/cover}
+.w{position:absolute;inset:0;background:linear-gradient(${side === 'right' ? 270 : 90}deg,rgba(10,8,20,.82) 0%,rgba(10,8,20,.55) 42%,rgba(10,8,20,0) 68%)}
+.t{position:absolute;${side === 'right' ? 'right' : 'left'}:64px;top:60px;bottom:60px;width:640px;display:flex;align-items:center}
+.t p{margin:0;font:400 150px/1.04 T,Impact,'Arial Narrow',sans-serif;text-transform:uppercase;color:#fff;letter-spacing:.01em;text-shadow:0 6px 0 rgba(0,0,0,.45),0 0 28px rgba(0,0,0,.5);${side === 'right' ? 'text-align:right;' : ''}}
+.t b{font-weight:400;color:#111;background:linear-gradient(to bottom,transparent 9%,${accent} 9%,${accent} 93%,transparent 93%);padding:0 .12em;box-decoration-break:clone;-webkit-box-decoration-break:clone;text-shadow:none}
+</style></head><body><div class="f"></div><div class="w"></div><div class="t"><p id="p">${words}</p></div>
+<script>const p=document.getElementById('p'),box=p.parentNode;let s=150;while((p.scrollHeight>box.clientHeight||p.scrollWidth>box.clientWidth)&&s>40){s-=4;p.style.fontSize=s+'px'}</script></body></html>`;
+}
 async function thumbnail(video, flags) {
+  const outDir = path.join(video.dir, 'out'), out = path.join(outDir, 'thumbnail.jpg');
+  fs.mkdirSync(outDir, { recursive: true });
+  if (flags.use && flags.use !== true) {
+    const from = path.join(outDir, 'thumbnails', `${String(flags.use).replace(/[^\w-]/g, '')}.jpg`);
+    if (!fs.existsSync(from)) die(`no version "${flags.use}" in out/thumbnails/`);
+    fs.copyFileSync(from, out);
+    return console.log(`out/thumbnail.jpg is now version ${flags.use}`);
+  }
   const prep = scenes.prepare(video);
   let at;
   if (flags.at && flags.at !== true) at = Number(flags.at);
@@ -214,14 +247,35 @@ async function thumbnail(video, flags) {
   const view = await scenes.openScenes(video, { scale: 1 });
   let jpg;
   try { jpg = await view.frameAt(at, 0.95); } finally { await view.close(); }
-  fs.mkdirSync(path.join(video.dir, 'out'), { recursive: true });
-  const tmp = path.join(os.tmpdir(), `bagelunit-thumb-${process.pid}.jpg`), out = path.join(video.dir, 'out', 'thumbnail.jpg');
-  fs.writeFileSync(tmp, jpg);
-  const r = sh('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-vf', 'scale=1280:720:flags=lanczos', '-q:v', '3', out]);
-  fs.rmSync(tmp, { force: true });
-  if (r.status !== 0) die(`thumbnail failed: ${(r.stderr || '').slice(-300)}`);
-  console.log(`out/thumbnail.jpg (1280x720, ${(fs.statSync(out).size / 1024).toFixed(0)} KB, the frame at ${at.toFixed(1)} s). A title over a still is the creator's call: look at it first.`);
-  if (fs.statSync(out).size > 2 * 1024 * 1024) console.log('note: YouTube takes thumbnails up to 2 MB; this is larger');
+  const name = flags.name && flags.name !== true ? String(flags.name).replace(/[^\w-]/g, '') : null;
+  const target = name ? path.join(outDir, 'thumbnails', `${name}.jpg`) : out;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const text = flags.text && flags.text !== true ? String(flags.text) : '';
+  if (text) {
+    const brand = checks.findBrand(video.dir);
+    const accent = /^#[0-9a-f]{3,8}$/i.test(video.cfg.thumbnail?.accent || '') ? video.cfg.thumbnail.accent : /^#[0-9a-f]{3,8}$/i.test(brand?.cfg.colors?.accent || '') ? brand.cfg.colors.accent : '#FFD23F';
+    const fontFile = path.join(REEL_ENGINE, 'fonts', 'Anton-Regular.ttf');
+    const font = fs.existsSync(fontFile) ? `data:font/ttf;base64,${fs.readFileSync(fontFile).toString('base64')}` : null;
+    const { launch } = await import('./chromium.mjs');
+    const browser = await launch();
+    try {
+      const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+      await page.setContent(thumbPage(`data:image/jpeg;base64,${Buffer.from(jpg).toString('base64')}`, text, { accent, font, side: flags.side === 'right' ? 'right' : 'left' }));
+      await page.evaluate(() => document.fonts.ready);
+      fs.writeFileSync(target, await page.screenshot({ type: 'jpeg', quality: 90 }));
+    } finally { await browser.close().catch(() => {}); }
+  } else {
+    const tmp = path.join(os.tmpdir(), `bagelunit-thumb-${process.pid}.jpg`);
+    fs.writeFileSync(tmp, jpg);
+    const r = sh('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', tmp, '-vf', 'scale=1280:720:flags=lanczos', '-q:v', '3', target]);
+    fs.rmSync(tmp, { force: true });
+    if (r.status !== 0) die(`thumbnail failed: ${(r.stderr || '').slice(-300)}`);
+  }
+  const rel = path.relative(video.dir, target);
+  console.log(`${rel} (1280x720, ${(fs.statSync(target).size / 1024).toFixed(0)} KB, the frame at ${at.toFixed(1)} s${text ? `, "${text.replace(/\*/g, '')}"` : ''}). Look at it, also small (about 320 px wide, the size on a phone).`);
+  const title = (fs.existsSync(path.join(outDir, 'youtube.txt')) ? fs.readFileSync(path.join(outDir, 'youtube.txt'), 'utf8').split('\n')[0] : '') || video.cfg.title || '';
+  for (const n of thumbnailNotes(text, title)) console.log(`note: ${n}`);
+  if (fs.statSync(target).size > 2 * 1024 * 1024) console.log('note: YouTube takes thumbnails up to 2 MB; this is larger');
 }
 
 /* ── fact check ─────────────────────────────────────────────────────────────────────────────────────────────────────── */
