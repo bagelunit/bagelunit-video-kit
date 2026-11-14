@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+**Vertical full episodes and Instagram-only changes** (from a studio's first episode, 13 November 2026)
+- `video check --vertical` and `video render --vertical` draw the whole episode at 1080x1920 in the Reel Kit's safe area, in their own `build/scenes-vertical/`, writing `out/vertical.mp4` without touching the widescreen version, its scene times or its caches.
+- A scene's `"vertical": {"props": {...}, "narration": "..."}` changes it for the vertical version only (for example "Like, follow, share" on Instagram), and `audio/vo-vertical.mp3` with `build/words-vertical.json` gives the vertical version its own voice.
+- `video revoice <folder> --line "old words" --to "new words"`: re-voices one line with the sentence before it as a lead-in (so it reads at the episode's pace), splices it in, and prints words per second for the new line, the old line and the episode, warning past 20%. Without `--apply` it only shows what it would send and whether it costs anything. The YouTube voice is never overwritten (`--vertical` changes the vertical voice; `--use` makes a revoiced copy the voice and keeps the old one).
+- The vertical version's first scene opens built, so frame 0 shows the subject and the title (scene option `"enter"`, styles 1475aae). Deep Zoom keeps big hero objects inside the portrait safe area.
+- `video tidy` clears the vertical scratch too (about 5 GB an episode) and says how long the next render will take to draw every scene again, from this folder's past render times.
+
 **Connecting YouTube, rewritten from a real setup** (SETUP.md section 5)
 - The steps follow a real setup of six Brand Account channels on one Google account: the project, the API, the consent screen, branding, publishing, the client file, the sign-in, the first-upload check and the limits, in that order.
 - Publish the app before anyone signs in: a sign-in made in Testing keeps its 7-day end even after publishing.

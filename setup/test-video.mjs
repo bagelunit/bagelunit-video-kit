@@ -836,4 +836,134 @@ await test('review: column names that differ and columns that are missing are sa
   assert.ok(page.includes('href="../reviews/2026-11-13.md"') && page.includes('Channel review 2026-11-13'));
 });
 
+const r3t = (x) => Math.round(x * 1000) / 1000;
+/* ── video revoice: one line voiced again with its lead-in, spliced into a copy ─────────────────────────────────────── */
+await test('revoice finds the line, takes the sentence before it as lead-in, and plans the splice (end card moves with it)', async () => {
+  const R = await import('../studio/tools/revoice.mjs');
+  const words = W([['First', 0, 0.3], ['line', 0.35, 0.6], ['here.', 0.65, 1], ['Like,', 1.6, 1.9], ['subscribe', 2, 2.5], ['and', 2.55, 2.7], ['share.', 2.75, 3.1]]);
+  assert.deepEqual(R.findLine(words, 'like subscribe and share'), { a: 3, b: 6 });
+  assert.throws(() => R.findLine(words, 'not said'), /not in the voice/);
+  assert.throws(() => R.findLine(W([['go', 0, 1], ['go', 1, 2]]), 'go'), /said 2 times/);
+  assert.deepEqual(R.leadIn(words, 3), { from: 0, text: 'First line here.' });
+  assert.equal(R.leadIn(words, 0).text, '');
+  // the take: lead-in then the new line, at its own clock
+  const take = { words: W([['First', 0.1, 0.4], ['line', 0.45, 0.7], ['here.', 0.75, 1.1], ['Like,', 1.5, 1.8], ['follow', 1.9, 2.3], ['and', 2.35, 2.5], ['share.', 2.55, 3.0]]), length: 3.3 };
+  const base = { words, length: 3.5, pauses: [{ n: 9, id: 'end', seconds: 4, at: 3.5 }] };
+  const plan = R.planSplice(base, { a: 3, b: 6 }, take, 4);
+  assert.equal(plan.baseIn, 1.3, 'cut in the middle of the gap before the old line');
+  assert.equal(plan.takeIn, 1.3, 'the lead-in is cut off in the gap before the new line');
+  assert.equal(plan.baseOut, 3.35, 'the last line keeps a short tail, the silence after it stays');
+  assert.deepEqual(plan.words.map((w) => w.w), ['First', 'line', 'here.', 'Like,', 'follow', 'and', 'share.']);
+  assert.equal(plan.words[4].s, 1.9);
+  assert.equal(plan.pauses[0].at, r3t(3.5 + plan.delta), 'a pause after the line moves by the change in length');
+  assert.ok(Math.abs(plan.delta - ((3.0 + 0.25 - 1.3) - (3.35 - 1.3))) < 1e-6);
+});
+await test('revoice pace: new line, old line and episode words per second, warned over 20%', async () => {
+  const R = await import('../studio/tools/revoice.mjs');
+  const words = scenes.fakeWords('One two three four. Five six seven eight. Nine ten eleven twelve.', 0.3);
+  const ep = R.episodeRate(words);
+  assert.ok(ep > 2 && ep < 6, `episode ${ep}`);
+  assert.equal(R.paceReport({ fresh: ep, old: ep, episode: ep }).length, 1, 'no warning at the episode pace');
+  const slow = R.paceReport({ fresh: ep * 0.7, old: ep * 1.45, episode: ep }).join('\n');
+  assert.match(slow, /new line reads 30% slower/);
+  assert.match(slow, /old line itself read 45% faster/);
+});
+
+function revoiceFolder() {
+  const eng = tmp(); fs.mkdirSync(path.join(eng, 'tools'));
+  // a stand-in voice.py: one word every 0.3 s, a tone as long as the words, and a count of calls (no key, no credits)
+  fs.writeFileSync(path.join(eng, 'tools', 'voice.py'), `import sys, json, subprocess, pathlib
+d = pathlib.Path(sys.argv[1]); words = (d / 'script.txt').read_text().split()
+c = d.parent / 'calls.txt'; c.write_text(str(int(c.read_text()) + 1 if c.exists() else 1))
+(d / 'build').mkdir(exist_ok=True); (d / 'audio').mkdir(exist_ok=True)
+json.dump([{'w': w, 's': 0.1 + i * 0.3, 'e': 0.1 + i * 0.3 + 0.25} for i, w in enumerate(words)], open(d / 'build' / 'words.json', 'w'))
+subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=200:duration=%s' % (0.2 + len(words) * 0.3), str(d / 'audio' / 'vo.mp3')], check=True)
+`);
+  const dir = tmp();
+  const script = 'Ice is slippery for a reason. Water sits on top of it. Like, subscribe to Quark Street and share.';
+  fs.writeFileSync(path.join(dir, 'video.json'), JSON.stringify({ style: 'clean-shapes', no_research: 'a test script' }));
+  fs.writeFileSync(path.join(dir, 'script.txt'), script);
+  fs.writeFileSync(path.join(dir, 'outline.md'), '# Map\n');
+  checks.approve(dir, 'map'); checks.recordFacts(dir, { scope: 'script', result: 'PASS', cfg: { no_research: 'a test script' } });
+  const words = scenes.fakeWords(script, 0.38);
+  scenes.writeWords(dir, words);
+  fs.mkdirSync(path.join(dir, 'audio'), { recursive: true });
+  ff(['-f', 'lavfi', '-i', `sine=frequency=300:duration=${(words.at(-1).e + 0.4).toFixed(2)}`, '-ac', '1', path.join(dir, 'audio', 'vo.mp3')]);
+  const run = (...args) => spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'revoice', dir, ...args], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: eng } });
+  return { dir, run, words };
+}
+const sha = (f) => createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+
+await test('video revoice --vertical: dry run first, then the vertical voice only, with the lead-in cut off', () => {
+  const { dir, run, words } = revoiceFolder();
+  const wide = sha(path.join(dir, 'audio', 'vo.mp3')), wideWords = fs.readFileSync(path.join(dir, 'build', 'words.json'), 'utf8');
+  const line = ['--line', 'Like, subscribe to Quark Street and share.', '--to', 'Like, follow Quark Street and share.', '--vertical'];
+  let r = run(...line);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.stdout, /lead-in: "Water sits on top of it\."/);
+  assert.match(r.stdout, /will send: \d+ characters \(\d+ lead-in \+ 36 new line\).*a paid voice call/);
+  assert.match(r.stdout, /a dry run: nothing sent/);
+  assert.ok(!fs.existsSync(path.join(dir, 'audio', 'vo-vertical.mp3')) && !fs.existsSync(path.join(dir, 'build', 'revoice')), 'a dry run makes nothing');
+  r = run(...line, '--apply');
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const vw = JSON.parse(fs.readFileSync(path.join(dir, 'build', 'words-vertical.json'), 'utf8'));
+  assert.deepEqual(vw.map((w) => w.w), ['Ice', 'is', 'slippery', 'for', 'a', 'reason.', 'Water', 'sits', 'on', 'top', 'of', 'it.', 'Like,', 'follow', 'Quark', 'Street', 'and', 'share.']);
+  assert.equal(words.length, 19);
+  assert.ok(vw.every((x, i) => i === 0 || x.s >= vw[i - 1].e - 1e-6), 'word times only go forward');
+  assert.equal(sha(path.join(dir, 'audio', 'vo.mp3')), wide, 'the YouTube voice is not touched');
+  assert.equal(fs.readFileSync(path.join(dir, 'build', 'words.json'), 'utf8'), wideWords);
+  const len = probe(path.join(dir, 'audio', 'vo-vertical.mp3'));
+  assert.ok(vw.at(-1).e <= len + 0.05, `the word clock ends inside the audio (${vw.at(-1).e} vs ${len})`);
+  assert.match(r.stdout, /pace: new line [\d.]+ words\/s, old line [\d.]+ words\/s, episode [\d.]+ words\/s/);
+  // a second change works on the vertical voice, where the old words are gone now
+  r = run(...line);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /not in the voice's words/);
+});
+
+await test('video revoice without --vertical writes a copy; --use swaps it in and keeps the old voice', () => {
+  const { dir, run } = revoiceFolder();
+  const wide = sha(path.join(dir, 'audio', 'vo.mp3'));
+  const r = run('--line', 'Water sits on top of it.', '--to', 'A thin film of water sits on top of it.', '--apply');
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.ok(fs.existsSync(path.join(dir, 'audio', 'vo-revoiced.mp3')));
+  assert.equal(sha(path.join(dir, 'audio', 'vo.mp3')), wide, 'not replaced until --use');
+  assert.match(r.stdout, /--use/);
+  const again = run('--line', 'Water sits on top of it.', '--to', 'A thin film of water sits on top of it.');
+  assert.match(again.stdout, /already voiced, free \(reused\)/, 'the same request is not a new paid call');
+  const u = run('--use');
+  assert.equal(u.status, 0, u.stderr + u.stdout);
+  assert.equal(sha(path.join(dir, 'audio', 'vo-before-revoice.mp3')), wide);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'build', 'words.json'), 'utf8')).some((w) => w.w === 'film'));
+  assert.ok(!fs.existsSync(path.join(dir, 'audio', 'vo-revoiced.mp3')));
+});
+
+/* ── tidy: what the next render costs ───────────────────────────────────────────────────────────────────────────────── */
+await test('tidy says the next render draws every scene again, with an estimate from the folder\'s render times', () => {
+  const d = tmp();
+  for (let i = 1; i <= 64; i++) { const f = path.join(d, 'build', 'scenes-vertical', `${String(i).padStart(3, '0')}.mp4`); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.alloc(10)); }
+  fs.mkdirSync(path.join(d, 'build', 'scenes')); fs.writeFileSync(path.join(d, 'build', 'scenes', '001.mp4'), Buffer.alloc(10));
+  assert.deepEqual(checks.tidy(d).rerender.map((e) => e.seconds), [null, null], 'no render times yet: no estimate');
+  fs.writeFileSync(path.join(d, 'build', 'render-times.json'), JSON.stringify([{ shape: 'vertical', scenes: 64, rendered: 64, seconds: 762 }, { shape: 'vertical', scenes: 64, rendered: 0, seconds: 0 }]));
+  const est = checks.tidy(d).rerender;
+  assert.deepEqual(est.find((e) => e.shape === 'vertical'), { shape: 'vertical', scenes: 64, seconds: 762, from: 'this shape' });
+  assert.deepEqual(est.find((e) => e.shape === 'wide'), { shape: 'wide', scenes: 1, seconds: 12, from: 'the other shape' });
+  checks.tidy(d, { apply: true });
+  assert.ok(fs.existsSync(path.join(d, 'build', 'render-times.json')), 'tidy keeps the render times');
+  const v = tmp(); fs.writeFileSync(path.join(v, 'video.json'), JSON.stringify({ style: 'clean-shapes' }));
+  fs.cpSync(path.join(d, 'build'), path.join(v, 'build'), { recursive: true });
+  for (let i = 1; i <= 3; i++) { const f = path.join(v, 'build', 'scenes-vertical', `00${i}.mp4`); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.alloc(10)); }
+  const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'tidy', v], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /next  video render --vertical  draws all 3 scenes again \(free, nothing is left to reuse\): about 36 s/);
+});
+
+await test('a render that draws scenes records how long it took (build/render-times.json, last 30)', () => {
+  const d = tmp(); fs.mkdirSync(path.join(d, 'build'));
+  for (let i = 0; i < 35; i++) scenes.recordRenderTime(d, { scenes: 10, rendered: 2, seconds: 20.04 });
+  const log = JSON.parse(fs.readFileSync(path.join(d, 'build', 'render-times.json'), 'utf8'));
+  assert.equal(log.length, 30);
+  assert.deepEqual({ ...log[0], at: 'x' }, { at: 'x', shape: 'wide', scenes: 10, rendered: 2, seconds: 20 });
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

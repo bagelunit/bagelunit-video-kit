@@ -348,11 +348,28 @@ export function qaCurrent(dir) {
 // A finished video folder keeps the words, the research, the plan, the voice (paid for, and the chunk records that stop it
 // being paid for twice), the approvals and out/. The scene clips and the joined copies in build/ go: a render makes them
 // again for free, it only takes time.
-const TIDY = ['build/scenes', 'build/video.mp4', 'build/draft.mp4'];
+const TIDY = ['build/scenes', 'build/video.mp4', 'build/draft.mp4', 'build/scenes-vertical', 'build/vertical.mp4', 'build/draft-vertical.mp4'];
 const sizeOf = (p) => { if (!fs.existsSync(p)) return 0; const s = fs.statSync(p); return s.isDirectory() ? fs.readdirSync(p).reduce((n, x) => n + sizeOf(path.join(p, x)), 0) : s.size; };
 
 export function tidy(dir, { apply = false } = {}) {
   const items = TIDY.map((x) => ({ rel: x, bytes: sizeOf(path.join(dir, x)) })).filter((x) => x.bytes > 0);
+  const rerender = rerenderEstimate(dir, items);         // counted before anything is removed
   if (apply) for (const x of items) fs.rmSync(path.join(dir, x.rel), { recursive: true, force: true });
-  return { items, bytes: items.reduce((n, x) => n + x.bytes, 0), uploaded: fs.existsSync(path.join(dir, 'out', 'youtube-published.json')) };
+  return { items, bytes: items.reduce((n, x) => n + x.bytes, 0), uploaded: fs.existsSync(path.join(dir, 'out', 'youtube-published.json')), rerender };
+}
+
+// After tidy the next render of that shape draws every scene again (nothing is left to reuse). For each shape whose scene
+// clips go: how many scenes, and about how long, from build/render-times.json (scenes.mjs recordRenderTime): the seconds per
+// drawn scene of this shape's past renders, or of the other shape's when this one has none; null when the folder has no
+// record yet (a folder rendered before render times were kept).
+export function rerenderEstimate(dir, items) {
+  const log = readJSON(path.join(dir, 'build', 'render-times.json'), []);
+  const runs = (Array.isArray(log) ? log : []).filter((r) => r && r.rendered > 0 && r.seconds > 0);
+  const perScene = (list) => { const n = list.reduce((a, r) => a + r.rendered, 0); return n ? list.reduce((a, r) => a + r.seconds, 0) / n : null; };
+  return [['wide', 'build/scenes'], ['vertical', 'build/scenes-vertical']].filter(([, rel]) => items.some((x) => x.rel === rel)).map(([shape, rel]) => {
+    const scenes = fs.readdirSync(path.join(dir, rel)).filter((f) => /^\d{3}\.mp4$/.test(f)).length;
+    const own = perScene(runs.filter((r) => r.shape === shape)), other = perScene(runs.filter((r) => r.shape !== shape));
+    const each = own ?? other;
+    return { shape, scenes, seconds: each != null ? Math.round(each * scenes) : null, from: own != null ? 'this shape' : other != null ? 'the other shape' : null };
+  });
 }

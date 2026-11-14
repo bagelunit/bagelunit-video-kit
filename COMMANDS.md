@@ -32,6 +32,7 @@ Most of the time you only need three: `/video-setup` (once per channel, in this 
 | `video facts <video> record --result PASS\|FAIL` | Records the verdict after the sources were re-read (PASS is refused while there are errors). |
 | `video approve <video> map\|final [--watched]` | Records your go-ahead: the map (the voice waits for it) or the finished video (the upload waits for it). `--watched` records that you watched the whole final cut; the upload needs it. |
 | `video voice <video>` | Voices the script in pieces after checking your credits; a piece already paid for is reused. `"voice_speed"` in video.json sets the pace. A scene's `"pause": 4` puts that much silence in the voice at its start (a brand intro, a breath). Warns if the word clock runs past the audio. |
+| `video revoice <video> --line "old words" --to "new words" [--vertical] [--apply] [--use]` | Voices one line again with the sentence before it as a lead-in (so it keeps the episode's pace), then cuts the lead-in off and splices the line into a copy of the voice. A dry run first (what it would send, in characters); `--apply` voices it (once); `--use` makes the copy the voice. `--vertical` changes the vertical (Instagram) voice only. Prints words per second against the episode and warns past 20%. |
 | `video stand-in <video>` | A free tone in place of the voice, for previews and tests (never uploaded). |
 | `video plan <video>` | Each scene's time, from the voice. |
 | `video check <video>` | Draws every scene: errors, anything outside the safe area, stills to look at. |
@@ -45,5 +46,5 @@ Most of the time you only need three: `/video-setup` (once per channel, in this 
 | `video reels <video> [--pick 3-5] [--apply]` | Suggests the stretches that would stand alone as reels; makes Reel Kit reel folders from the ones you pick. |
 | `video review <channel folder> <export.csv ...>` | A review of the channel from YouTube Studio's CSV exports (Advanced mode, Export current view): `reviews/<date>.md` with observations, hypotheses and up to 5 tests for the next video. Without an export it says which one to download; it never guesses a number. |
 | `video dashboard [--credits] [--open]` | Draws the channel's dashboard (with a link to the newest channel review); `--credits` reads your ElevenLabs characters left. |
-| `video tidy <video> [--apply]` | Lists, then removes, the build files a render can make again (most of a video's size). |
+| `video tidy <video> [--apply]` | Lists, then removes, the build files a render can make again (most of a video's size), and says how long the next render will take, since it draws every scene again. |
 | `video chapters <video>` | Writes the YouTube chapters again from the scenes. |

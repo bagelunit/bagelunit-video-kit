@@ -26,9 +26,23 @@ import { launch } from './chromium.mjs';
 export const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');   // the studio/ folder
 export const STYLES_DIR = path.join(SKILL, 'styles');
 const CORE = path.join(STYLES_DIR, '_core');
-const W = 1920, H = 1080, FPS = 30;
-const SAFE = { top: 54, bottom: 54, side: 96 };         // title-safe: 5% of the picture on every side (long-form video has no app buttons over it)
-const SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
+let W = 1920, H = 1080;
+const FPS = 30;
+let SAFE = { top: 54, bottom: 54, side: 96 };           // title-safe: 5% of the picture on every side (long-form video has no app buttons over it)
+let SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
+// The shape. "wide" (default) is the YouTube video. "vertical" (owner, 2026-11-13: Instagram always gets a vertical
+// full episode) draws the same scenes, voice and words at 1080x1920 with the Reel Kit's safe area (app buttons and
+// captions cover the top and bottom), in build/scenes-vertical/, and joins them as build/vertical.mp4, so the wide
+// video's scenes and caches are never touched.
+let SHAPE = { name: 'wide', scenes: 'scenes', video: 'video.mp4', draft: 'draft.mp4', boxes: 'scene_boxes.json', errors: 'render_errors.txt' };
+export function setShape(shape) {
+  if (shape !== 'vertical') return SHAPE;
+  W = 1080; H = 1920;
+  SAFE = { top: 250, bottom: 450, side: 60 };             // the same numbers as the Reel Kit (tools/scenes.mjs, tools/qa.py)
+  SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
+  SHAPE = { name: 'vertical', scenes: 'scenes-vertical', video: 'vertical.mp4', draft: 'draft-vertical.mp4', boxes: 'scene_boxes-vertical.json', errors: 'render_errors-vertical.txt' };
+  return SHAPE;
+}
 const TOL = 6;                                          // px of slack on the safe area, as in the styles repo's tester
 const RENDER_VERSION = 'scenes-2';                      // change it when the frame loop or the codec settings change
 const MIN_SCENE = 0.5;                                  // s; a scene shorter than this is squeezed out of its neighbours
@@ -99,6 +113,8 @@ export function planOf(dir, style) {
   const notes = [];
   const scenes = list.map((s, k) => {
     if (!s || typeof s !== 'object') throw new Error(`scene ${k + 1} in scenes.json is not an object`);
+    // "vertical": {...} on a scene changes it for the vertical (Instagram) version only, e.g. {"props": {"title": "Like, follow, share"}, "narration": "..."}
+    if (SHAPE.name === 'vertical' && s.vertical && typeof s.vertical === 'object') s = { ...s, ...s.vertical, props: { ...(s.props || {}), ...(s.vertical.props || {}) } };
     if (!s.template && !s.code) throw new Error(`scene ${k + 1} has no "template" (or "code")`);
     if (s.template && !known.has(s.template)) throw new Error(`scene ${k + 1}: ${style} has no template "${s.template}". It has: ${[...known].join(', ')}`);
     if (s.code && !fs.existsSync(path.join(dir, s.code))) throw new Error(`scene ${k + 1}: its code file ${s.code} does not exist`);
@@ -116,7 +132,7 @@ export function planOf(dir, style) {
     if (!String(s.narration || '').trim() && !pause) notes.push(`scene ${k + 1}: no "narration", so its time can only be guessed (even split)`);
     return { n: k + 1, file: pad(k + 1), id: String(s.id || `${String(k + 1).padStart(2, '0')}-${s.template || 'custom'}`),
       chapter: s.chapter ? String(s.chapter).trim() : null, template: s.template || null, code: s.code || null, props: s.props || {}, narration: String(s.narration || ''), seed: s.seed,
-      ...(pause ? { pause } : {}), ...(s.sfx != null ? { sfx: s.sfx } : {}) };
+      ...(pause ? { pause } : {}), ...(s.sfx != null ? { sfx: s.sfx } : {}), ...(s.enter != null ? { enter: s.enter } : {}) };
   });
   return { scenes, notes };
 }
@@ -255,11 +271,15 @@ function mediaLength(file) {
 // plan + times + words, without building anything
 export function prepare(reel) {
   const { scenes, notes } = planOf(reel.dir, reel.cfg.style);
-  const words = readJSON(path.join(reel.dir, 'build', 'words.json'), []) || [];
-  const vo = path.join(reel.dir, 'audio', 'vo.mp3');
+  // vertical: its own voice when there is one (audio/vo-vertical.mp3 + build/words-vertical.json, e.g. "follow" for "subscribe")
+  const own = SHAPE.name === 'vertical' && fs.existsSync(path.join(reel.dir, 'audio', 'vo-vertical.mp3')) && fs.existsSync(path.join(reel.dir, 'build', 'words-vertical.json'));
+  const words = readJSON(path.join(reel.dir, 'build', own ? 'words-vertical.json' : 'words.json'), []) || [];
+  const vo = path.join(reel.dir, 'audio', own ? 'vo-vertical.mp3' : 'vo.mp3');
   const voLength = fs.existsSync(vo) ? mediaLength(vo) : null;
   // the pauses the voice was joined with; one that scenes.json no longer asks for (or asks for differently) is not used
-  const joined = words.length ? readJSON(path.join(reel.dir, 'build', 'pauses.json'), []) || [] : [];
+  // (a vertical voice changed by video revoice keeps its own, build/pauses-vertical.json: a longer line moves the end card)
+  const ownPauses = own && fs.existsSync(path.join(reel.dir, 'build', 'pauses-vertical.json'));
+  const joined = words.length ? readJSON(path.join(reel.dir, 'build', ownPauses ? 'pauses-vertical.json' : 'pauses.json'), []) || [] : [];
   const pauses = joined.filter((p) => scenes[p.n - 1] && Math.abs((scenes[p.n - 1].pause || 0) - p.seconds) < 1e-6);
   if (words.length) {
     for (const s of scenes) if (s.pause && !pauses.some((p) => p.n === s.n)) notes.push(`scene ${s.n}: its "pause" (${s.pause.toFixed(2)} s) is not in the voice yet: run  video voice <folder>  again (free: no piece is voiced again) or video stand-in`);
@@ -287,7 +307,7 @@ export function prepare(reel) {
 // (for --scene previews; the finished video takes the whole voice): when only it changed, the sound is put in again
 // without drawing a frame.
 export function buildPages(reel, prep) {
-  const out = path.join(reel.dir, 'build', 'scenes');
+  const out = path.join(reel.dir, 'build', SHAPE.scenes);
   fs.mkdirSync(out, { recursive: true });
   const seed = Number(reel.cfg.seed ?? 1);
   const voHash = prep.vo ? sha(fs.readFileSync(prep.vo)) : 'silent';
@@ -299,6 +319,9 @@ export function buildPages(reel, prep) {
     const args = [path.join(CORE, 'build-scene.mjs'), '--style', path.join(STYLES_DIR, reel.cfg.style), '--out', `${base}.html`,
       '--duration', dur.toFixed(6), '--width', String(W), '--height', String(H), '--seed', String(s.seed ?? seed),
       '--narration', s.narration, '--words', `${base}.words.json`];
+    // "enter": a scene opens on its finished picture; the vertical version's first scene does by default (frame 0 on Instagram)
+    const enter = s.enter ?? (s.n === 1 && SHAPE.name === 'vertical' ? 'none' : null);
+    if (enter != null && enter !== 0 && enter !== '0') args.push('--enter', String(enter));
     if (s.template) { fs.writeFileSync(`${base}.props.json`, JSON.stringify(s.props)); args.push('--template', s.template, '--props', `${base}.props.json`); }
     else args.push('--code', path.join(reel.dir, s.code));
     const b = spawnSync(process.execPath, args, { encoding: 'utf8' });
@@ -485,6 +508,17 @@ export function musicBed({ seconds, musicLength = null, fade = MUSIC_FADE, volum
   return { loop, chain, fade: [fin, fout] };
 }
 
+/* ── render times: how long drawing scenes took in this folder, so `video tidy` can say what a full re-render costs ─ */
+// build/render-times.json (kept by tidy): the last RENDER_LOG renders that drew at least one scene, per shape.
+const RENDER_LOG = 30;
+export function recordRenderTime(dir, { scenes, rendered, seconds }) {
+  const f = path.join(dir, 'build', 'render-times.json');
+  const log = readJSON(f, []);
+  const list = Array.isArray(log) ? log : [];
+  list.push({ at: new Date().toISOString().slice(0, 16), shape: SHAPE.name, scenes, rendered, seconds: Math.round(seconds * 10) / 10 });
+  try { fs.writeFileSync(f, JSON.stringify(list.slice(-RENDER_LOG), null, 1)); } catch { /* a timing note never stops a render */ }
+}
+
 /* ── video render <dir> ─────────────────────────────────────────────────────────────────────────────── */
 export async function renderScenes(reel, { only = null, force = false } = {}) {
   const began = Date.now();
@@ -492,12 +526,12 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   const prep = prepare(reel);
   for (const n of prep.notes) console.log(`note: ${n}`);
   const build = path.join(reel.dir, 'build');
-  fs.writeFileSync(path.join(build, 'scene_times.json'), JSON.stringify(prep.times, null, 1));
+  fs.writeFileSync(path.join(build, SHAPE.name === 'vertical' ? 'scene_times-vertical.json' : 'scene_times.json'), JSON.stringify(prep.times, null, 1));
   const items = buildPages(reel, prep);
   // files of scenes no longer in the plan
-  for (const f of fs.readdirSync(path.join(build, 'scenes'))) {
+  for (const f of fs.readdirSync(path.join(build, SHAPE.scenes))) {
     const m = /^(\d{3})\./.exec(f);
-    if (m && Number(m[1]) > items.length) fs.rmSync(path.join(build, 'scenes', f), { force: true });
+    if (m && Number(m[1]) > items.length) fs.rmSync(path.join(build, SHAPE.scenes, f), { force: true });
   }
   let pick = items;
   if (only != null) {
@@ -515,6 +549,7 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   }
   if (todo.length) {
     const browser = await launch();
+    const drawStart = Date.now();
     try {
       for (const it of todo) {
         process.stdout.write(`scene ${it.scene.n}/${items.length} ${it.scene.id} (${it.dur.toFixed(2)} s, ${it.time.frames} frames)... `);
@@ -524,11 +559,12 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
         console.log(`${((Date.now() - t) / 1000).toFixed(1)} s${m.errors.length ? `  ${m.errors.length} error(s)` : ''}`);
       }
     } finally { await browser.close().catch(() => {}); }
+    recordRenderTime(reel.dir, { scenes: items.length, rendered: todo.length, seconds: (Date.now() - drawStart) / 1000 });
   }
   const reused = pick.length - todo.length;
   const all = items.map((it) => manifests.get(it.scene.n));
   const errs = all.filter(Boolean).flatMap((m) => m.errors.map((e) => `scene ${m.n} (${m.id}): ${e}`));
-  const errFile = path.join(build, 'render_errors.txt');
+  const errFile = path.join(build, SHAPE.errors);
   if (errs.length) {
     fs.writeFileSync(errFile, errs.join('\n') + '\n');
     process.exitCode = 2;
@@ -540,11 +576,11 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   }
 
   // join the scenes without encoding the picture again, then put the whole voice (and music) under it at -14 LUFS
-  const list = path.join(build, 'scenes', 'join.txt'), joined = path.join(build, 'scenes', 'joined.mp4');
+  const list = path.join(build, SHAPE.scenes, 'join.txt'), joined = path.join(build, SHAPE.scenes, 'joined.mp4');
   fs.writeFileSync(list, items.map((it) => `file '${(it.base + '.mp4').split(path.sep).join('/').replace(/'/g, "'\\''")}'`).join('\n') + '\n');
   ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-map', '0:v', '-c', 'copy', joined]);
   const seconds = items.reduce((n, it) => n + it.time.frames, 0) / FPS;
-  const video = path.join(build, 'video.mp4'), draft = path.join(build, 'draft.mp4');
+  const video = path.join(build, SHAPE.video), draft = path.join(build, SHAPE.draft);
   const norm = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
   const voice = '[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad';
   const music = reel.cfg.music ? path.resolve(reel.dir, String(reel.cfg.music)) : null;
@@ -568,15 +604,15 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
     graph += `;${mixIns.join('')}${mixIns.length > 1 ? `amix=inputs=${mixIns.length}:duration=first:dropout_transition=0:normalize=0,` : ''}${norm}[a]`;
     ffmpeg([...inputs, '-filter_complex', graph, ...out]);
   }
-  ffmpeg(['-i', video, '-vf', 'scale=960:540:flags=lanczos', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', draft]);
+  ffmpeg(['-i', video, '-vf', `scale=${W / 2}:${H / 2}:flags=lanczos`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', draft]);
   fs.rmSync(joined, { force: true }); fs.rmSync(list, { force: true });
 
   // resting boxes on the video's clock, for tools/qa.py (safe zone)
   const boxes = all.flatMap((m, i) => (m?.boxes || []).map((b) => ({ ...b, t0: r3(b.t0 + items[i].time.t0), t1: r3(b.t1 + items[i].time.t0), scene: items[i].scene.n })));
-  const boxFile = path.join(build, 'scene_boxes.json');
+  const boxFile = path.join(build, SHAPE.boxes);
   if (all.some((m) => m?.inspect)) fs.writeFileSync(boxFile, JSON.stringify(boxes)); else fs.rmSync(boxFile, { force: true });
 
-  console.log(`render: build/video.mp4 (1920x1080) and build/draft.mp4 (960x540), ${seconds.toFixed(2)} s, ${items.length} scenes: ${todo.length} rendered, ${reused} reused unchanged${resliced ? ` (${resliced} with only their sound made again, the voice changed around them)` : ''}, ${Math.round((Date.now() - began) / 1000)} s`);
+  console.log(`render: build/${SHAPE.video} (${W}x${H}) and build/${SHAPE.draft} (${W / 2}x${H / 2}), ${seconds.toFixed(2)} s, ${items.length} scenes: ${todo.length} rendered, ${reused} reused unchanged${resliced ? ` (${resliced} with only their sound made again, the voice changed around them)` : ''}, ${Math.round((Date.now() - began) / 1000)} s`);
   if (!prep.vo) console.log('note: no audio/vo.mp3 yet, so the video is silent');
   else if (Math.abs(seconds - prep.voLength - prep.endCard) > 1) console.log(`note: the video (${seconds.toFixed(2)} s) and the voice (${prep.voLength.toFixed(2)} s${prep.endCard ? ` + an end card of ${prep.endCard.toFixed(2)} s` : ''}) differ by more than 1 s`);
   if (standInActive(reel.dir)) console.log('WARNING: audio/vo.mp3 is the STAND-IN tone from video stand-in, not a voice. Voice the script (video voice) before anything is approved or posted.');
@@ -610,7 +646,7 @@ export async function checkScenes(reel, { only = null, times = null } = {}) {
   for (const n of prep.notes) console.log(`note: ${n}`);
   let items = buildPages(reel, prep);
   if (only != null) items = items.filter((it) => String(it.scene.n) === String(only) || it.scene.id === String(only));
-  const out = path.join(reel.dir, 'build', 'scenes', 'check');
+  const out = path.join(reel.dir, 'build', SHAPE.scenes, 'check');
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(out, { recursive: true });
   const report = [], sheets = [];
