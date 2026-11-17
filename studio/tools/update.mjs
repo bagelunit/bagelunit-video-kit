@@ -202,7 +202,7 @@ export function changelogSince(kit, since, maxLines = 24) {
 /* ── the whole thing ────────────────────────────────────────────────────────────────────────────────────────────────── */
 export async function update(o = {}) {
   const log = o.log || console.log, env = o.env || process.env, home = o.home || os.homedir();
-  const engine = o.engine || defaultEngine(env, home), apply = Boolean(o.apply), run = o.run || defaultRun, install = o.install || defaultInstall;
+  const engine = o.engine || defaultEngine(env, home), apply = Boolean(o.apply), run = o.run || defaultRun, install = typeof o.install === 'function' ? o.install : defaultInstall;   // the command line passes true (install) or false (--no-install), not a function
   const res = { ok: true, stopped: null, applied: false, pulled: false, installed: false, channels: [] };
   const stop = (why) => { res.ok = false; res.stopped = why; log(`STOPPED: ${why}\nNothing was changed after this point.`); return res; };
 

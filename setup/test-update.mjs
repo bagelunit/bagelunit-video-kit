@@ -243,4 +243,14 @@ await test('the command line: video update is a dry run by default and explains 
   assert.equal(r.status, 0, r.stderr + r.stdout); assert.match(r.stdout, /This was a dry run/); assert.match(r.stdout, /already current: nothing to change/);
 });
 
+await test('the command line path installs for real: options as video update passes them (install: true), no stub function', async () => {
+  const w = world(), ch = channelFrom(w.kit), e = engineDir(w.kit); w.release();
+  const c = capture();
+  // video update's command line passes install: true (or false for --no-install), never a function: the default installer must run (the kit's setup/install.* here are empty scripts)
+  const r = await U.update({ apply: true, kit: w.kit, channel: ch, engine: e, home: tmp(), log: c.log, install: true, stamp: '20261117120000' });
+  assert.equal(r.ok, true, c.text()); assert.equal(r.installed, true, c.text()); assert.match(c.text(), /installed again/);
+  const r2 = await U.update({ apply: true, kit: w.kit, channel: ch, engine: e, home: tmp(), log: capture().log, install: false });
+  assert.equal(r2.installed, false);
+});
+
 console.log(`\n${n} test(s) passed`);

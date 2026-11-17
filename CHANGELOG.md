@@ -2,6 +2,9 @@
 
 ## 1.1.0
 
+**Fixed after the release (on main, carried by the next version)**
+- `video update --apply` from the command line stopped with "install is not a function" (only a test stub installer had been exercised). The command line now runs the real installer, and a test covers it.
+
 **The voice needs no outside tool** (with the Reel Kit 1.3.0 or newer)
 - The voice step now works with no ElevenLabs key: the free built-in voice (this computer's own speech engine; basic quality) speaks, and `video voice` says which voice it will use before it starts. With a key saved, ElevenLabs speaks as before. `--provider local|elevenlabs|command` chooses for one run, and brand.json `voice.provider` can be `command` (your own text-to-speech command). An older Reel Kit keeps the old behaviour and says to update it.
 - The credit check only applies to ElevenLabs: for the built-in voice and your own command it prints "credits check: not needed" and never blocks on characters.
