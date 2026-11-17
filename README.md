@@ -7,6 +7,8 @@ Make YouTube videos with Claude Code: give it a topic and it researches it, maps
 - **You approve twice.** Nothing is voiced before you approve the map, and nothing is uploaded before you approve the finished video. Uploads are private until you say otherwise.
 - **One folder per channel.** Run several YouTube channels from one kit, each with its own topic, voice, colours, facts and sign-in.
 - **A dashboard** for each channel: what needs you, every video's step, a calendar, voice credits left, and a card that plays each video.
+- **Licensed material, recorded.** Music, sound effects, stock video, motion graphics and LUTs come from Uppbeat only, downloaded by you; the kit ships none, records each one, checks its file and its channel safelist, and refuses the final approval if the check fails.
+- **Easy to update.** `video update` (or `/video-update` in a channel folder) pulls the kit, installs the engine again and updates the channel folder, with a dry run first and a backup of every file it replaces.
 - **Reels too.** With the BagelUnit Reel Kit, the best stretches of a video become vertical reels in the same style.
 
 The vertical reels are made by its sister kit, the [BagelUnit Reel Kit](https://github.com/bagelunit/bagelunit-reel-kit), which this kit needs installed first (it provides the voice, the headless browser, the fonts and the sound effects).
@@ -25,7 +27,7 @@ The full guide, with every step, what it costs and how to connect YouTube, is **
 ```
 topic -> style -> research (sources) -> report and map -> YOUR GO-AHEAD
       -> script -> scenes -> fact check -> voice -> render -> quality check -> thumbnail and YouTube text
-      -> YOUR YES -> upload (private) -> reels (optional) -> tidy
+      -> YOUR YES -> upload (private) -> reels (optional) -> archive -> tidy
 ```
 
 ## What is in this folder
@@ -33,7 +35,7 @@ topic -> style -> research (sources) -> report and map -> YOUR GO-AHEAD
 | Folder | What |
 |---|---|
 | `studio/` | the engine, installed as the Claude Code skill `bagelunit-video`: the work order (`SKILL.md`), the commands (`tools/`), the 20 scene styles, the dashboard and the playbook |
-| `template/` | a channel folder, copied by `/video-setup` for each channel |
+| `template/` | a channel folder, copied by `/video-setup` for each channel (with `brand/licensed/`, the register and README for Uppbeat material) |
 | `setup/` | the installer, the channel folder maker, the repo scan and the tests |
 | `docs/` | notes for people changing the kit |
 

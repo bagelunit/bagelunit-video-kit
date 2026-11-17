@@ -5,3 +5,6 @@ videos/*/out/thumbnails/
 videos/*/audio/
 .cache/
 .DS_Store
+# licensed media (Uppbeat downloads) stays on this computer; the register brand/licensed/assets.json is kept
+brand/licensed/*/*
+!brand/licensed/*/.gitkeep

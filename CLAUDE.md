@@ -4,20 +4,22 @@ This folder is the kit's source, not a place to make videos. Videos are made in 
 
 - **"Set up the video kit" / first time on this computer:** check the Reel Kit is installed (`video doctor`), then run `bash setup/install.sh` (Mac, Linux) or `node setup/install.mjs` (any system) and walk the person through anything marked NOTE, using `SETUP.md`. Ask every question with the AskUserQuestion tool (options and "Other"), never as plain text. Never ask for, print or store a key or token.
 - **After install, the next step is always `/video-setup`.** That skill (`.claude/skills/video-setup/`) asks the channel's name and where its folder goes, runs `node setup/new-workspace.mjs <folder>` to copy `template/` there, then asks the channel questions (`template/.claude/skills/channel-setup/SKILL.md`).
-- **Point to the command.** Every next step names its command first: `bash setup/install.sh`, `/video-setup`, `node setup/new-workspace.mjs <folder>`, then in a channel folder `/bagelunit-video <topic>`, `/channel-setup`, `video dashboard --open`.
+- **Point to the command.** Every next step names its command first: `bash setup/install.sh`, `/video-setup`, `node setup/new-workspace.mjs <folder>`, then in a channel folder `/bagelunit-video <topic>`, `/channel-setup`, `/db` (`video dashboard --open`), `/video-update` (`video update`).
 - **Someone opens a session here without a clear task:** if `~/.claude/skills/bagelunit-video/SKILL.md` is missing, offer to set up the kit; if it exists, say in one or two lines that the next step is `/video-setup` (a folder for a new channel), unless they already have a channel folder, in which case they open Claude Code there.
 - **Making a video:** in a channel folder, never here and never in `template/`. If the person asks for a video here, run `/video-setup` first (or tell them to open Claude Code in their channel folder).
 - **Web steps go through the browser tool** (Claude in Chrome): Google Cloud and the YouTube sign-in (`SETUP.md` section 5). The person logs in, makes the clicks that are theirs (Google's agreements, Publish app, Allow) and downloads the client file; Claude moves that file into place without opening it, asks before anything paid or public and never types a password or a secret.
 
 ## Changing the kit
 
-- **The engine** is `studio/`, installed as `~/.claude/skills/bagelunit-video` (the work order is `studio/SKILL.md`; commands in `studio/tools/`: `video.mjs`, `scenes.mjs`, `checks.mjs`, `reels.mjs`, `youtube.mjs`, `sfx.py`). After a change, re-run `node setup/install.mjs` (or install with `--link`).
+- **The engine** is `studio/`, installed as `~/.claude/skills/bagelunit-video` (the work order is `studio/SKILL.md`; commands in `studio/tools/`: `video.mjs`, `scenes.mjs`, `checks.mjs`, `sources.mjs`, `archive.mjs`, `reels.mjs`, `youtube.mjs`, `sfx.py`). After a change, re-run `node setup/install.mjs` (or install with `--link`).
 - **The dashboard** is `studio/dashboard/` (model, page, client, bundled Poppins). Read `docs/dashboard-design.md` before changing its look; it follows the Reel Kit dashboard's rules. Check changes at 1280, 980 and 390 px.
 - **The channel folder** is `template/` (CLAUDE.md, brand/, the `/channel-setup` skill). `setup/new-workspace.mjs` copies it; existing channel folders are not updated by it.
 - **Styles are copies.** `studio/styles/` is written by `sync-to-kit.mjs` in the bagelunit-styles repo (`node sync-to-kit.mjs --kit <this folder> --format wide`, dry run first, then `--apply`). Never edit it here.
+- **Updating** is `video update` (`studio/tools/update.mjs`, the channel skill `/video-update`): it needs the clone's path, which the installer records in `~/.claude/skills/bagelunit-video/.install.json` (a linked install points into the clone). A change to what channel folders get (`template/`) reaches existing folders only through it. Its tests are `setup/test-update.mjs`.
+- **Licensed material** (Uppbeat only, YouTube only) is a mechanism, never files: `studio/tools/licensed.mjs`, the register `template/brand/licensed/assets.json` (empty), its README, and the tests in `setup/test-licensed.mjs`. Never commit audio, video, LUT or other asset files; the scan fails on media.
 - **Commands reference:** when a command or skill is added or changed, update `COMMANDS.md` and `SETUP.md`.
 - **Everything is our own code.** Do not copy or keep outside material in the repo. Invent names in samples; no real people, other companies' characters or logos.
-- **Never commit** keys, `.env` files, photos of people, renders (`*.mp4`), audio, thumbnails or `node_modules`. Run `node setup/scan-repo.mjs` before any commit; `node setup/test-video.mjs` must pass.
+- **Never commit** keys, `.env` files, photos of people, renders (`*.mp4`), audio, thumbnails or `node_modules`. Run `node setup/scan-repo.mjs` before any commit; `node setup/test-video.mjs`, `node setup/test-licensed.mjs` and `node setup/test-update.mjs` must pass.
 - No em dashes in anything written here.
 
 ## Releasing

@@ -100,9 +100,27 @@ Do the steps in this order. Publishing (step 4) before anyone signs in (step 7) 
 
 ## 6. The dashboard
 
-`video dashboard --open` in a channel folder opens `videos/video-dashboard.html`: what needs you now, the numbers (videos in progress, uploaded, minutes, voice characters left, disk free), the work order with how many videos wait at each step, every video with its next command, a calendar (give a video a date with `"publish_on": "2026-12-01"` in its `video.json`) and a card per video that plays it. It redraws itself after every command that changes a video, and links the newest channel review (below). `video dashboard --credits` reads your ElevenLabs characters left (a free read of your own account, only when you ask).
+`video dashboard --open` (or `/db`) in a channel folder opens `videos/video-dashboard.html`: what needs you now, the numbers (videos in progress, uploaded, minutes, voice characters left, disk free), the work order with how many videos wait at each step, every video with its next command, a calendar (give a video a date with `"publish_on": "2026-12-01"` in its `video.json`) and a card per video that plays it. It redraws itself after every command that changes a video, and links the newest channel review (below). `video dashboard --credits` reads your ElevenLabs characters left (a free read of your own account, only when you ask).
 
 **Channel review.** Once a few videos are up, ask Claude how the channel is doing. It needs YouTube Studio's own numbers, as a file: Studio, Analytics, Advanced mode, Content, add the metrics Impressions, Impressions click-through rate, Average view duration, Average percentage viewed, Views and Watch time, then Export current view, Comma-separated values, and unzip it. `video review <channel folder> "<unzipped folder>/Table data.csv"` writes `reviews/<date>.md`: what the numbers say, what might explain it, and up to 5 tests for the next video. It never guesses a number; without a file it says which one to download.
+
+## 6b. Source check and backup
+
+`video sources <video>` checks every DOI in a video's research, script and description at Crossref (free, no key) and lists the real title, first author and year of each, so a wrong DOI is caught; a DOI that does not exist fails with exit code 1. It also saves public source links in the Wayback Machine (`--no-archive` skips that). It sends only public links and a polite User-Agent with no personal details (`BAGELUNIT_CONTACT` adds an address if you want one). Result: `source-safety.md` in the video's folder.
+
+`video archive <video> --to gdrive:Videos` copies the finished files, the text and the voice you paid for with [rclone](https://rclone.org/install/) (install it and run `rclone config` once, yourself; the kit never asks for or stores a key), then compares checksums and writes `archive.json`. `video tidy` warns when an episode has no such record. To back everything up every night, `scripts/nightly-backup.sh` in the channel folder runs it for every video; it is a template that is not scheduled: set `BAGELUNIT_BACKUP_TO`, try it once by hand, then schedule it with cron, launchd or Task Scheduler if you want.
+
+## 6c. Licensed assets from Uppbeat
+
+Music, sound effects, stock video, motion graphics and LUTs may come from **Uppbeat** (uppbeat.io, Business plan) and nowhere else. The kit ships none of them and has no way to download them (Uppbeat has no API): you download by hand, the kit records and uses what you downloaded. **YouTube only:** the vertical Instagram version carries none of it.
+
+1. On uppbeat.io open the track, effect, clip or LUT and download it. For music and sound effects choose the **WAV** download.
+2. In Uppbeat open **Account**, then **Safelist**, and add this channel's YouTube channel (do it before the first upload, or YouTube may flag the music).
+3. In the channel folder: `video licensed add ~/Downloads/clear-skies.wav --type music --title "Clear Skies" --artist "..." --url "https://uppbeat.io/track/..." --channels <channel slug>`. It copies the file into `brand/licensed/music/`, records its sha256 in `brand/licensed/assets.json` and refuses a missing file or an id already used. A LUT must be a real `.cube`. `video licensed list` and `video licensed check [<video>]` show and check them; `video licensed channels <id> a,b` changes the safelisted channels; `video licensed remove <id>` takes one out.
+4. Use it by id in a video (`brand/licensed/README.md` has the exact settings): `"music": [{"asset": "clear-skies", "from": "intro", "fade": 2, "gain_db": -18}]`, `"look": {"lut": "warm-film", "strength": 0.6}`, a scene `{"clip": {"asset": "city-aerial", "start": 4, "duration": 6}, "narration": "..."}` for a stock cutaway, or an `"overlay": {"asset": "dust", "blend": "screen", "opacity": 0.6, "at": 1.5}` on any scene.
+5. Before the final approval write the credits: `video licensed credits <video>` adds a "Music and assets" block to `out/youtube.txt`. `video approve <video> final` refuses while `video licensed check` fails (an asset not recorded, a file or hash that changed, the channel not in its `channels`, or the credits missing) and records the list with the credits.
+
+Licensed video and overlays decorate; they never carry the story. `assets.json` is kept in git, the media files are not.
 
 ## 7. Reels from a video (with the Reel Kit)
 
@@ -121,7 +139,7 @@ Re-voicing after a change costs only the pieces whose words changed; changing th
 
 ## 9. Updating
 
-In this kit's folder: `git pull` (or download the new ZIP), then `bash setup/install.sh` again. Channel folders keep everything; your videos, brand files and sign-ins are never touched by an update. `CHANGELOG.md` says what changed.
+In a channel folder, type `/video-update` (or run `video update`). It is a dry run first: it finds the kit folder you installed from (recorded at install time, or `~/dev/bagelunit-video-kit`, or `--kit <folder>`), shows this version and build against the kit's, runs `git fetch` and says how far behind `origin/main` it is, lists what a pull would bring and what would change in this channel folder. Then `video update --apply` does it, in order: `git pull --ff-only` in the kit folder (only when it is behind and its tracked files have no uncommitted change, otherwise it stops and says why), `bash setup/install.sh` (Windows `node setup/install.mjs`) to install the engine again, then the channel folder: it replaces the files the kit owns (`CLAUDE.md`, `.claude/skills`, `scripts`, `brand/licensed/README.md`) after saving each old one next to it as `<name>.bak-<stamp>`, adds missing starter files, new `brand/brand.json` settings and `.gitignore` lines. Your videos, brand values, licensed assets, sign-ins and `CLAUDE.local.md` are never touched. `--all` updates every channel folder on this computer; `--no-fetch`, `--no-pull` and `--no-install` skip those steps. Restart Claude Code afterwards so the new engine and skills load. Without the skill: in the kit's folder `git pull`, then `bash setup/install.sh` again. `CHANGELOG.md` says what changed.
 
 ## 10. When something stops
 

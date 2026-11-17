@@ -27,3 +27,8 @@ jobs:
       - name: Tests (no key, no network, no browser)
         shell: bash
         run: node setup/test-video.mjs
+      - name: Licensed assets and update tests
+        shell: bash
+        run: |
+          node setup/test-licensed.mjs
+          node setup/test-update.mjs

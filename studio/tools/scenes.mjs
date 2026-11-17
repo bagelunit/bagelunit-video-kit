@@ -22,24 +22,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch } from './chromium.mjs';
+import * as licensed from './licensed.mjs';
 
 export const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');   // the studio/ folder
 export const STYLES_DIR = path.join(SKILL, 'styles');
 const CORE = path.join(STYLES_DIR, '_core');
 let W = 1920, H = 1080;
 const FPS = 30;
-let SAFE = { top: 54, bottom: 54, side: 96 };           // title-safe: 5% of the picture on every side (long-form video has no app buttons over it)
-let SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
+let SAFE = { top: 54, bottom: 54, left: 96, right: 96 };           // title-safe: 5% of the picture on every side (long-form video has no app buttons over it)
+let SAFE_BOX = [SAFE.left, SAFE.top, W - SAFE.right, H - SAFE.bottom];
 // The shape. "wide" (default) is the YouTube video. "vertical" (owner, 2026-11-13: Instagram always gets a vertical
 // full episode) draws the same scenes, voice and words at 1080x1920 with the Reel Kit's safe area (app buttons and
 // captions cover the top and bottom), in build/scenes-vertical/, and joins them as build/vertical.mp4, so the wide
 // video's scenes and caches are never touched.
 let SHAPE = { name: 'wide', scenes: 'scenes', video: 'video.mp4', draft: 'draft.mp4', boxes: 'scene_boxes.json', errors: 'render_errors.txt' };
+export const safeBox = () => [...SAFE_BOX];
+export const VERTICAL_SAFE = { top: 250, bottom: 300, left: 60, right: 120 };
 export function setShape(shape) {
   if (shape !== 'vertical') return SHAPE;
   W = 1080; H = 1920;
-  SAFE = { top: 250, bottom: 450, side: 60 };             // the same numbers as the Reel Kit (tools/scenes.mjs, tools/qa.py)
-  SAFE_BOX = [SAFE.side, SAFE.top, W - SAFE.side, H - SAFE.bottom];
+  SAFE = { top: 250, bottom: 300, left: 60, right: 120 }; // the Reel Kit's one safe zone: app buttons sit on the right
+  SAFE_BOX = [SAFE.left, SAFE.top, W - SAFE.right, H - SAFE.bottom];
   SHAPE = { name: 'vertical', scenes: 'scenes-vertical', video: 'vertical.mp4', draft: 'draft-vertical.mp4', boxes: 'scene_boxes-vertical.json', errors: 'render_errors-vertical.txt' };
   return SHAPE;
 }
@@ -97,6 +100,27 @@ export function fakeWords(text, pace = 0.38, start = 0.35) {
   });
 }
 
+// A stock-video cutaway scene: {"clip": {"asset": id, "start": s, "duration": s, "mute": true}}. The picture fills the frame (scaled
+// and cropped), the clip's own sound is never used (it is always muted), and the scene's time comes from its narration like any scene.
+export function normalizeClip(c, n) {
+  if (!c || typeof c !== 'object' || Array.isArray(c) || typeof c.asset !== 'string' || !c.asset) throw new Error(`scene ${n}: "clip" must be {"asset": "<stock-video id>", "start": seconds, "duration": seconds}`);
+  const start = c.start == null ? 0 : Number(c.start), duration = c.duration == null ? null : Number(c.duration);
+  if (!Number.isFinite(start) || start < 0) throw new Error(`scene ${n}: clip "start" must be 0 or more seconds`);
+  if (duration != null && !(Number.isFinite(duration) && duration > 0)) throw new Error(`scene ${n}: clip "duration" must be more than 0 seconds`);
+  if (c.mute === false) throw new Error(`scene ${n}: stock video is always muted ("mute": true); the voice and the music are the sound`);
+  return { asset: c.asset, start, duration, mute: true };
+}
+// An overlay on any scene: {"overlay": {"asset": id, "blend": "normal"|"screen", "opacity": 0..1, "at": s, "duration": s}}
+export function normalizeOverlay(o, n) {
+  if (!o || typeof o !== 'object' || Array.isArray(o) || typeof o.asset !== 'string' || !o.asset) throw new Error(`scene ${n}: "overlay" must be {"asset": "<motion-graphic id>", "blend": "normal|screen", "opacity": 0-1, "at": seconds, "duration": seconds}`);
+  const blend = o.blend == null ? 'normal' : String(o.blend), opacity = o.opacity == null ? 1 : Number(o.opacity), at = o.at == null ? 0 : Number(o.at), duration = o.duration == null ? null : Number(o.duration);
+  if (!['normal', 'screen'].includes(blend)) throw new Error(`scene ${n}: overlay "blend" must be normal or screen (it is "${o.blend}")`);
+  if (!(Number.isFinite(opacity) && opacity >= 0 && opacity <= 1)) throw new Error(`scene ${n}: overlay "opacity" must be from 0 to 1`);
+  if (!Number.isFinite(at) || at < 0) throw new Error(`scene ${n}: overlay "at" must be 0 or more seconds into the scene`);
+  if (duration != null && !(Number.isFinite(duration) && duration > 0)) throw new Error(`scene ${n}: overlay "duration" must be more than 0 seconds`);
+  return { asset: o.asset, blend, opacity, at, duration };
+}
+
 /* ── the plan ───────────────────────────────────────────────────────────────────────────────────────────────────────── */
 // scenes.json: {"scenes": [{"template": "<id>", "props": {...}, "narration": "the words this scene covers"}, ...]}
 // (a bare list works too). Optional per scene: "id", "seed", or "code": "scenes/02.js" (the body of scene(V, S, root),
@@ -115,7 +139,10 @@ export function planOf(dir, style) {
     if (!s || typeof s !== 'object') throw new Error(`scene ${k + 1} in scenes.json is not an object`);
     // "vertical": {...} on a scene changes it for the vertical (Instagram) version only, e.g. {"props": {"title": "Like, follow, share"}, "narration": "..."}
     if (SHAPE.name === 'vertical' && s.vertical && typeof s.vertical === 'object') s = { ...s, ...s.vertical, props: { ...(s.props || {}), ...(s.vertical.props || {}) } };
-    if (!s.template && !s.code) throw new Error(`scene ${k + 1} has no "template" (or "code")`);
+    if (!s.template && !s.code && !s.clip) throw new Error(`scene ${k + 1} has no "template" (or "code", or "clip")`);
+    if (s.clip && (s.template || s.code)) throw new Error(`scene ${k + 1}: a "clip" scene has no template or code (the stock video is the picture)`);
+    const clip = s.clip ? normalizeClip(s.clip, k + 1) : null;
+    const overlays = s.overlay != null ? [].concat(s.overlay).map((o) => normalizeOverlay(o, k + 1)) : [];
     if (s.template && !known.has(s.template)) throw new Error(`scene ${k + 1}: ${style} has no template "${s.template}". It has: ${[...known].join(', ')}`);
     if (s.code && !fs.existsSync(path.join(dir, s.code))) throw new Error(`scene ${k + 1}: its code file ${s.code} does not exist`);
     if (s.props != null && (typeof s.props !== 'object' || Array.isArray(s.props))) throw new Error(`scene ${k + 1}: "props" must be an object`);
@@ -130,8 +157,9 @@ export function planOf(dir, style) {
       pause = Math.round(pause * FPS) / FPS;                    // on a frame, so the scenes after it move by whole frames
     }
     if (!String(s.narration || '').trim() && !pause) notes.push(`scene ${k + 1}: no "narration", so its time can only be guessed (even split)`);
-    return { n: k + 1, file: pad(k + 1), id: String(s.id || `${String(k + 1).padStart(2, '0')}-${s.template || 'custom'}`),
+    return { n: k + 1, file: pad(k + 1), id: String(s.id || `${String(k + 1).padStart(2, '0')}-${s.template || (clip ? 'clip' : 'custom')}`),
       chapter: s.chapter ? String(s.chapter).trim() : null, template: s.template || null, code: s.code || null, props: s.props || {}, narration: String(s.narration || ''), seed: s.seed,
+      ...(clip ? { clip } : {}), ...(overlays.length ? { overlays } : {}),
       ...(pause ? { pause } : {}), ...(s.sfx != null ? { sfx: s.sfx } : {}), ...(s.enter != null ? { enter: s.enter } : {}) };
   });
   return { scenes, notes };
@@ -316,6 +344,11 @@ export function buildPages(reel, prep) {
     const base = path.join(out, s.file);
     const words = prep.words.filter((w) => w.s >= t.t0 - 1e-6 && w.s < t.t1 - 1e-6).map((w) => ({ word: w.w, start: r3(w.s - t.t0), end: r3(Math.min(w.e, t.t1) - t.t0) }));
     fs.writeFileSync(`${base}.words.json`, JSON.stringify(words));
+    const extra = licensedHash(reel, s);                      // the stock clip and overlays change the picture, so they change its fingerprint
+    if (s.clip) {
+      const hash = sha(RENDER_VERSION, 'clip', `${W}x${H}`, `${t.frames}`, extra);
+      return { scene: s, time: t, dur, base, html: '', hash, audio: sha(RENDER_VERSION, voHash, `${t.t0}|${t.frames}`) };
+    }
     const args = [path.join(CORE, 'build-scene.mjs'), '--style', path.join(STYLES_DIR, reel.cfg.style), '--out', `${base}.html`,
       '--duration', dur.toFixed(6), '--width', String(W), '--height', String(H), '--seed', String(s.seed ?? seed),
       '--narration', s.narration, '--words', `${base}.words.json`];
@@ -327,7 +360,7 @@ export function buildPages(reel, prep) {
     const b = spawnSync(process.execPath, args, { encoding: 'utf8' });
     if (b.status !== 0) throw new Error(`building scene ${s.n} failed: ${(b.stderr || b.stdout).trim().slice(0, 600)}`);
     const html = fs.readFileSync(`${base}.html`);
-    const hash = sha(RENDER_VERSION, html, `${t.frames}`);
+    const hash = extra ? sha(RENDER_VERSION, html, `${t.frames}`, extra) : sha(RENDER_VERSION, html, `${t.frames}`);
     const audio = sha(RENDER_VERSION, voHash, `${t.t0}|${t.frames}`);
     return { scene: s, time: t, dur, base, html: html.toString('utf8'), hash, audio };
   });
@@ -386,14 +419,16 @@ function sliceAudio(audio, t0, dur, frames) {
   return { audioIn, filter };
 }
 
+// the same codec settings for every scene (the styles repo's render-scene.mjs), so the scenes join without encoding again
+const VIDEO_CODEC = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(FPS), '-g', String(FPS * 2), '-video_track_timescale', '90000'];
+const AUDIO_CODEC = ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'];
+
 function encoder(out, audio, t0, dur, frames) {
   const { audioIn, filter } = sliceAudio(audio, t0, dur, frames);
   // the same settings for every scene (the styles repo's render-scene.mjs), so the scenes join without encoding again
   const ff = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(FPS), '-i', 'pipe:0',
     ...audioIn, '-filter_complex', filter, '-map', '0:v', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-profile:v', 'high', '-pix_fmt', 'yuv420p',
-    '-r', String(FPS), '-g', String(FPS * 2), '-video_track_timescale', '90000',
-    '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-t', (frames / FPS).toFixed(6), '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
+    ...VIDEO_CODEC, ...AUDIO_CODEC, '-t', (frames / FPS).toFixed(6), '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
   const done = new Promise((resolve, reject) => { ff.on('error', reject); ff.on('close', (c) => (c === 0 ? resolve() : reject(new Error(`ffmpeg exited with ${c}`)))); });
   return { ff, done };
 }
@@ -443,8 +478,8 @@ function reslice(item, vo, m) {
   return manifest;
 }
 
-function ffmpeg(args) {
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8' });
+function ffmpeg(args, opts = {}) {
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8', ...opts });
   if (r.status !== 0) throw new Error(`ffmpeg failed: ${(r.stderr || '').trim().slice(-600)}`);
 }
 
@@ -452,6 +487,114 @@ function ffmpeg(args) {
 function standInActive(dir) {
   const note = readJSON(path.join(dir, 'build', 'voice-stand-in.json'), null), vo = path.join(dir, 'audio', 'vo.mp3');
   return Boolean(note && fs.existsSync(vo) && note.sha === sha(fs.readFileSync(vo)));
+}
+
+/* ── licensed material: stock-video scenes, overlays, the LUT and licensed music (studio/tools/licensed.mjs) ───────── */
+// the stock clip and overlays of a scene, as text that changes when either the setting or the recorded file changes
+function licensedHash(reel, s) {
+  if (!s.clip && !s.overlays?.length) return '';
+  const root = licensed.channelRoot(reel.dir);
+  if (!root) throw new Error(`scene ${s.n} uses a licensed asset, but ${reel.dir} is not inside a channel folder (one with brand/brand.json)`);
+  const parts = [];
+  if (s.clip) parts.push(JSON.stringify(s.clip), licensed.resolveAsset(root, s.clip.asset, 'stock-video').rec.sha256);
+  for (const o of s.overlays || []) parts.push(JSON.stringify(o), licensed.resolveAsset(root, o.asset, 'motion-graphic').rec.sha256);
+  return parts.join('|');
+}
+
+// A stock-video scene: the clip scaled and cropped to fill the frame, held on its last frame if it is shorter than the scene,
+// no sound of its own; the scene's slice of the voice goes under it exactly as for a drawn scene.
+export function renderClip(item, vo, root) {
+  const { scene, time, base, hash } = item, frames = time.frames, dur = frames / FPS, tmp = `${base}.part.mp4`;
+  const { abs } = licensed.resolveAsset(root, scene.clip.asset, 'stock-video');
+  const len = mediaLength(abs), use = Math.min(scene.clip.duration || dur, dur), notes = [];
+  if (len != null && len - scene.clip.start < use - 0.05) notes.push(`its clip "${scene.clip.asset}" has only ${Math.max(0, len - scene.clip.start).toFixed(1)} s after ${scene.clip.start} s: the last frame is held`);
+  const { audioIn, filter } = sliceAudio(vo, time.t0, dur, frames);
+  const picture = `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${FPS},tpad=stop_mode=clone:stop_duration=${dur.toFixed(3)},trim=duration=${dur.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v]`;
+  ffmpeg(['-ss', String(scene.clip.start), '-t', String(use), '-i', abs, ...audioIn, '-filter_complex', `${picture};${filter}`, '-map', '[v]', '-map', '[a]',
+    ...VIDEO_CODEC, ...AUDIO_CODEC, '-t', dur.toFixed(6), '-movflags', '+faststart', tmp]);
+  fs.renameSync(tmp, `${base}.mp4`);
+  const manifest = { hash, audio: item.audio, n: scene.n, id: scene.id, template: null, clip: scene.clip.asset, t0: time.t0, t1: time.t1, frames, errors: [], notes, inspect: false, boxes: [] };
+  fs.writeFileSync(`${base}.json`, JSON.stringify(manifest, null, 1));
+  return manifest;
+}
+
+// The overlays of a scene composited onto its rendered clip (in place), keeping the scene's sound. "normal" uses the overlay's own
+// alpha (.mov, .webm), "screen" lets a black background drop out (light leaks, dust). "at" is seconds into the scene.
+export function applyOverlays(base, overlays, dur, root) {
+  if (!overlays?.length) return;
+  const tmp = `${base}.part.mp4`, inputs = ['-i', base], chains = [];
+  let cur = '[0:v]';
+  overlays.forEach((o, j) => {
+    const { abs } = licensed.resolveAsset(root, o.asset, 'motion-graphic');
+    inputs.push(...(/\.webm$/i.test(abs) ? ['-c:v', 'libvpx-vp9'] : []), '-i', abs);
+    const at = Math.min(o.at, dur), len = Math.max(0.04, Math.min(o.duration || dur, dur - at));
+    const fit = `trim=duration=${len.toFixed(3)},setpts=PTS-STARTPTS,scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1,fps=${FPS}`;
+    const out = `[c${j}]`;
+    if (o.blend === 'screen') {
+      // screen with black changes nothing, so the overlay is padded with black before and after and blended over the whole scene
+      // (in RGB: tpad's black in YUV has no chroma and tints the picture)
+      chains.push(`${cur}format=gbrp[b${j}]`,
+        `[${j + 1}:v]${fit},format=gbrp,tpad=start_mode=add:start_duration=${at.toFixed(3)}:color=black,tpad=stop_mode=add:stop_duration=${dur.toFixed(3)}:color=black,trim=duration=${dur.toFixed(6)},setpts=PTS-STARTPTS[o${j}]`,
+        `[b${j}][o${j}]blend=all_mode=screen:all_opacity=${o.opacity}:shortest=1${out}`);
+    } else {
+      chains.push(`[${j + 1}:v]${fit},format=rgba,colorchannelmixer=aa=${o.opacity},setpts=PTS+${at.toFixed(3)}/TB[o${j}]`,
+        `${cur}[o${j}]overlay=eof_action=pass:format=auto:enable='between(t,${at.toFixed(3)},${(at + len).toFixed(3)})'${out}`);
+    }
+    cur = out;
+  });
+  ffmpeg([...inputs, '-filter_complex', `${chains.join(';')};${cur}format=yuv420p[v]`, '-map', '[v]', '-map', '0:a', '-c:a', 'copy', ...VIDEO_CODEC,
+    '-t', dur.toFixed(6), '-movflags', '+faststart', tmp]);
+  fs.renameSync(tmp, base);
+}
+
+// video.json "look": {"lut": id, "strength": 0..1}
+export function lookOf(cfg = {}) {
+  const l = cfg.look;
+  if (l == null) return null;
+  if (typeof l !== 'object' || Array.isArray(l) || typeof l.lut !== 'string' || !l.lut) throw new Error('video.json "look" must be {"lut": "<lut id>", "strength": 0 to 1}');
+  const strength = l.strength == null ? 1 : Number(l.strength);
+  if (!(Number.isFinite(strength) && strength >= 0 && strength <= 1)) throw new Error('video.json look "strength" must be from 0 to 1');
+  return { lut: l.lut, strength };
+}
+// the whole joined picture through a .cube, mixed back with the ungraded picture by strength (1 = the LUT as it is)
+export function applyLook(src, out, cube, strength, workDir) {
+  const local = path.join(workDir, 'look.cube');
+  fs.copyFileSync(cube, local);                                   // ffmpeg runs in workDir, so the filter needs no escaped path
+  const graph = strength >= 1 ? '[0:v]lut3d=file=look.cube,format=yuv420p[v]'
+    : `[0:v]split[a][b];[a]lut3d=file=look.cube[g];[g][b]blend=all_mode=normal:all_opacity=${strength}:shortest=1,format=yuv420p[v]`;
+  ffmpeg(['-i', src, '-filter_complex', graph, '-map', '[v]', '-an', ...VIDEO_CODEC.map((x, i, a) => (a[i - 1] === '-crf' ? '16' : x)), '-movflags', '+faststart', out], { cwd: workDir });
+}
+
+// video.json "music": [{"asset": id, "from": scene id or seconds, "fade": s, "gain_db": -18}]. Each track starts at "from", fades in and
+// out over "fade" seconds, runs until the next track starts (they cross-fade) or the end, and loops if it is shorter. The beds are
+// mixed, then the same sidechain compression as any music ducks them under the voice. Returns the inputs and the graph that makes [bed].
+export function licensedMusic(entries, { times, scenes, seconds, resolve, lengthOf, firstInput = 2 }) {
+  if (!entries.length) throw new Error('video.json "music" is an empty list');
+  const list = entries.map((e, i) => {
+    if (!e || typeof e !== 'object' || typeof e.asset !== 'string') throw new Error(`video.json music[${i}] needs {"asset": "<music id>"}`);
+    let from = 0;
+    if (e.from != null) {
+      if (typeof e.from === 'number') from = e.from;
+      else { const k = scenes.findIndex((s) => s.id === String(e.from)); if (k < 0) throw new Error(`video.json music[${i}] "from": "${e.from}" is not a scene id (use a scene's "id", or a number of seconds)`); from = times[k].t0; }
+    }
+    const fade = e.fade == null ? 2 : Number(e.fade), gain = e.gain_db == null ? -18 : Number(e.gain_db);
+    if (!(Number.isFinite(from) && from >= 0 && from < seconds)) throw new Error(`video.json music[${i}] "from" is outside the video (0 to ${seconds.toFixed(1)} s)`);
+    if (!(Number.isFinite(fade) && fade >= 0)) throw new Error(`video.json music[${i}] "fade" must be 0 or more seconds`);
+    if (!(Number.isFinite(gain) && gain <= 6)) throw new Error(`video.json music[${i}] "gain_db" must be a number of dB, usually -14 to -24`);
+    return { ...e, from, fade, gain };
+  }).sort((a, b) => a.from - b.from);
+  const inputs = [], chains = [];
+  list.forEach((e, i) => {
+    const file = resolve(e.asset), next = list[i + 1];
+    const end = next ? Math.min(seconds, next.from + next.fade) : seconds, len = end - e.from;
+    if (len < 0.1) throw new Error(`video.json music[${i}] ("${e.asset}") would play for under 0.1 s`);
+    const fade = Math.min(e.fade, len / 2), ms = Math.round(e.from * 1000), tl = lengthOf(file);
+    inputs.push(...(Number.isFinite(tl) && tl >= len ? [] : ['-stream_loop', '-1']), '-i', file);
+    chains.push(`[${firstInput + i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=end=${len.toFixed(6)},asetpts=PTS-STARTPTS,`
+      + `${fade > 0 ? `afade=t=in:st=0:d=${fade.toFixed(3)},afade=t=out:st=${(len - fade).toFixed(3)}:d=${fade.toFixed(3)},` : ''}volume=${e.gain}dB,adelay=${ms}|${ms}[m${i}]`);
+  });
+  const graph = chains.join(';') + (list.length === 1 ? ';[m0]anull[bed]' : `;${list.map((_, i) => `[m${i}]`).join('')}amix=inputs=${list.length}:duration=longest:dropout_transition=0:normalize=0[bed]`);
+  return { inputs, graph, count: list.length };
 }
 
 /* ── sound effects ─────────────────────────────────────────────────────────────────────────────── */
@@ -523,7 +666,16 @@ export function recordRenderTime(dir, { scenes, rendered, seconds }) {
 export async function renderScenes(reel, { only = null, force = false } = {}) {
   const began = Date.now();
   if (reel.cfg.music) musicFade(reel.cfg);                      // a wrong "music_fade" stops here, before any scene is drawn
+  const vertical = SHAPE.name === 'vertical';
+  const look = vertical ? null : lookOf(reel.cfg);              // so does a wrong "look"
   const prep = prepare(reel);
+  const root = licensed.channelRoot(reel.dir);
+  // Uppbeat material is for YouTube only: the vertical (Instagram) version carries none of it
+  if (vertical) {
+    const s = prep.scenes.find((x) => x.clip || x.overlays?.length);
+    if (s) throw new Error(`scene ${s.n} uses licensed material (stock video or an overlay), which is for YouTube only. For the vertical version give that scene a "vertical" override without it, for example {"vertical": {"clip": null, "template": "<id>", "props": {...}, "narration": "..."}} (use "overlay": null to drop an overlay), or remove it`);
+    if (reel.cfg.look || Array.isArray(reel.cfg.music)) console.log('note: licensed look and music are YouTube only: left out of the vertical version');
+  }
   for (const n of prep.notes) console.log(`note: ${n}`);
   const build = path.join(reel.dir, 'build');
   fs.writeFileSync(path.join(build, SHAPE.name === 'vertical' ? 'scene_times-vertical.json' : 'scene_times.json'), JSON.stringify(prep.times, null, 1));
@@ -548,17 +700,19 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
     manifests.set(it.scene.n, reslice(it, prep.vo, m)); resliced++;
   }
   if (todo.length) {
-    const browser = await launch();
+    const browser = todo.some((it) => !it.scene.clip) ? await launch() : null;   // a stock-video scene needs no browser
     const drawStart = Date.now();
     try {
       for (const it of todo) {
         process.stdout.write(`scene ${it.scene.n}/${items.length} ${it.scene.id} (${it.dur.toFixed(2)} s, ${it.time.frames} frames)... `);
         const t = Date.now();
-        const m = await renderOne(browser, it, prep.vo);
+        const m = it.scene.clip ? renderClip(it, prep.vo, root) : await renderOne(browser, it, prep.vo);
+        if (it.scene.overlays?.length) applyOverlays(`${it.base}.mp4`, it.scene.overlays, it.dur, root);
         manifests.set(it.scene.n, m);
-        console.log(`${((Date.now() - t) / 1000).toFixed(1)} s${m.errors.length ? `  ${m.errors.length} error(s)` : ''}`);
+        console.log(`${((Date.now() - t) / 1000).toFixed(1)} s${m.errors.length ? `  ${m.errors.length} error(s)` : ''}${it.scene.clip ? '  (stock video)' : ''}${it.scene.overlays?.length ? `  (+${it.scene.overlays.length} overlay)` : ''}`);
+        for (const n of m.notes || []) console.log(`note: scene ${it.scene.n}: ${n}`);
       }
-    } finally { await browser.close().catch(() => {}); }
+    } finally { await browser?.close().catch(() => {}); }
     recordRenderTime(reel.dir, { scenes: items.length, rendered: todo.length, seconds: (Date.now() - drawStart) / 1000 });
   }
   const reused = pick.length - todo.length;
@@ -580,21 +734,37 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   fs.writeFileSync(list, items.map((it) => `file '${(it.base + '.mp4').split(path.sep).join('/').replace(/'/g, "'\\''")}'`).join('\n') + '\n');
   ffmpeg(['-f', 'concat', '-safe', '0', '-i', list, '-map', '0:v', '-c', 'copy', joined]);
   const seconds = items.reduce((n, it) => n + it.time.frames, 0) / FPS;
+  let picture = joined;
+  if (look && look.strength > 0) {                                // the LUT: one pass over the joined picture (the only step that encodes it again)
+    if (!root) throw new Error('video.json "look" names a LUT, but this video is not inside a channel folder');
+    const { abs } = licensed.resolveAsset(root, look.lut, 'lut');
+    picture = path.join(build, SHAPE.scenes, 'graded.mp4');
+    applyLook(joined, picture, abs, look.strength, build);
+    console.log(`look: LUT "${look.lut}" at strength ${look.strength}`);
+  } else if (look) console.log(`note: look "${look.lut}" has strength 0, so no grade was applied`);
   const video = path.join(build, SHAPE.video), draft = path.join(build, SHAPE.draft);
   const norm = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
   const voice = '[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad';
-  const music = reel.cfg.music ? path.resolve(reel.dir, String(reel.cfg.music)) : null;
+  const licensedBed = Array.isArray(reel.cfg.music) && prep.vo && !vertical
+    ? licensedMusic(reel.cfg.music, { times: prep.times, scenes: prep.scenes, seconds, firstInput: 2, lengthOf: mediaLength,
+      resolve: (id) => { if (!root) throw new Error('video.json "music" lists licensed assets, but this video is not inside a channel folder'); return licensed.resolveAsset(root, id, 'music').abs; } })
+    : null;
+  const music = reel.cfg.music && !Array.isArray(reel.cfg.music) ? path.resolve(reel.dir, String(reel.cfg.music)) : null;
   if (music && !fs.existsSync(music)) throw new Error(`video.json "music" points at ${music}, which does not exist`);
   const vol = Number(reel.cfg.music_volume ?? 0.18);
   const bed = music ? musicBed({ seconds, musicLength: mediaLength(music), fade: musicFade(reel.cfg), volume: vol }) : null;
   const stereo = 'aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
   const out = ['-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video];
-  if (!prep.vo) ffmpeg(['-i', joined, '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
+  if (!prep.vo) ffmpeg(['-i', picture, '-f', 'lavfi', '-i', 'anullsrc=r=48000:cl=stereo', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-t', seconds.toFixed(6), '-movflags', '+faststart', video]);
   else {
     // the voice, the music ducked under it, and the effects track, then the whole mix to -14 LUFS
-    const inputs = ['-i', joined, '-i', prep.vo];
+    const inputs = ['-i', picture, '-i', prep.vo];
     let graph, mixIns;
-    if (music) {
+    if (licensedBed) {
+      inputs.push(...licensedBed.inputs);
+      graph = `${voice},asplit=2[voice][sc];${licensedBed.graph};[bed][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked]`;
+      mixIns = ['[voice]', '[ducked]'];
+    } else if (music) {
       inputs.push(...(bed.loop ? ['-stream_loop', '-1'] : []), '-i', music);
       graph = `${voice},asplit=2[voice][sc];[2:a]${bed.chain}[music];[music][sc]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=350:makeup=1[ducked]`;
       mixIns = ['[voice]', '[ducked]'];
@@ -605,7 +775,7 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
     ffmpeg([...inputs, '-filter_complex', graph, ...out]);
   }
   ffmpeg(['-i', video, '-vf', `scale=${W / 2}:${H / 2}:flags=lanczos`, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-c:a', 'copy', '-movflags', '+faststart', draft]);
-  fs.rmSync(joined, { force: true }); fs.rmSync(list, { force: true });
+  fs.rmSync(joined, { force: true }); fs.rmSync(list, { force: true }); fs.rmSync(picture, { force: true });
 
   // resting boxes on the video's clock, for tools/qa.py (safe zone)
   const boxes = all.flatMap((m, i) => (m?.boxes || []).map((b) => ({ ...b, t0: r3(b.t0 + items[i].time.t0), t1: r3(b.t1 + items[i].time.t0), scene: items[i].scene.n })));
@@ -627,6 +797,14 @@ export async function openScenes(reel, { scale = 0.5 } = {}) {
   async function frameAt(t, quality = 0.92) {
     const k = items.findIndex((it) => t < it.time.t1 - 1e-9);
     const it = k === -1 ? items.at(-1) : items[k];
+    if (it.scene.clip) {
+      const root = licensed.channelRoot(reel.dir), { abs } = licensed.resolveAsset(root, it.scene.clip.asset, 'stock-video');
+      const at = it.scene.clip.start + Math.min(Math.max(0, t - it.time.t0), it.dur);
+      const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(at), '-i', abs, '-frames:v', '1', '-vf', `scale=${Math.round(W * scale)}:${Math.round(H * scale)}:force_original_aspect_ratio=increase,crop=${Math.round(W * scale)}:${Math.round(H * scale)}`, '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '3', '-'], { maxBuffer: 1 << 26 });
+      if (r.status === 0 && r.stdout.length) return r.stdout;
+      problems.add(`scene ${it.scene.n}: no frame could be read from the stock clip`);
+      return Buffer.alloc(0);
+    }
     if (!views.has(it.scene.n)) views.set(it.scene.n, await openScene(browser, it.html, scale));
     const view = views.get(it.scene.n);
     await view.seek(Math.min(Math.max(0, t - it.time.t0), it.dur - 1 / FPS));
@@ -644,6 +822,8 @@ export async function openScenes(reel, { scale = 0.5 } = {}) {
 export async function checkScenes(reel, { only = null, times = null } = {}) {
   const prep = prepare(reel);
   for (const n of prep.notes) console.log(`note: ${n}`);
+  for (const n of licensed.notesFor(reel.dir)) console.log(`note: ${n}`);
+  try { lookOf(reel.cfg); } catch (e) { console.log(`note: ${e.message}`); }
   let items = buildPages(reel, prep);
   if (only != null) items = items.filter((it) => String(it.scene.n) === String(only) || it.scene.id === String(only));
   const out = path.join(reel.dir, 'build', SHAPE.scenes, 'check');
@@ -654,6 +834,7 @@ export async function checkScenes(reel, { only = null, times = null } = {}) {
   try {
     for (const it of items) {
       const { scene, dur } = it, name = `${scene.file}`;
+      if (scene.clip) { sheets.push(`scene ${scene.n} (${scene.id}): a stock-video scene (${scene.clip.asset}); nothing is drawn, so only the clip's frame can be looked at after  video render`); continue; }
       const view = await openScene(browser, it.html, 1);
       const at = (times || ['20%', '45%', '70%', 'end']).map((x) => {
         x = String(x).trim();
@@ -716,7 +897,7 @@ export function printPlan(reel) {
   for (const t of prep.times) {
     const s = prep.scenes[t.n - 1];
     const pz = prep.pauses.find((p) => p.n === t.n);
-    console.log(`  ${String(t.n).padStart(2)}  ${t.t0.toFixed(2).padStart(6)}-${t.t1.toFixed(2).padStart(6)}s  ${(t.t1 - t.t0).toFixed(2).padStart(5)} s  ${(s.template || `code ${s.code}`).padEnd(20)} ` +
+    console.log(`  ${String(t.n).padStart(2)}  ${t.t0.toFixed(2).padStart(6)}-${t.t1.toFixed(2).padStart(6)}s  ${(t.t1 - t.t0).toFixed(2).padStart(5)} s  ${(s.template || (s.clip ? `clip ${s.clip.asset}` : `code ${s.code}`)).padEnd(20)} ` +
       (t.source === 'words' ? `words ${t.found}/${t.of}: "${t.first}" .. "${t.last}"` : pz && !t.of ? 'no words' : `even split (${t.found}/${t.of} words found)`) + (pz ? `  pause ${pz.seconds.toFixed(2)} s at ${pz.at.toFixed(2)} s` : ''));
   }
   for (const n of prep.notes) console.log(`note: ${n}`);

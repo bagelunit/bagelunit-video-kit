@@ -20,11 +20,15 @@
 //   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--plain] [--name b | --use b]  out/thumbnail.jpg (1280x720)
 //   node video.mjs captions <folder>                       out/captions.<lang>.srt from the word clock (the upload adds it)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
-//   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again
+//   node video.mjs sources <folder> [--no-archive] [--no-doi]  check every DOI at Crossref and archive the links: source-safety.md
+//   node video.mjs archive <folder> --to <remote:path> [--dry-run]  rclone copy of out/, text and voice, checksum-verified: archive.json
+//   node video.mjs tidy <folder> [--apply]                 frees disk: removes scene clips and copies a render can make again (warns if not archived)
 //   node video.mjs reels <folder> [--pick 3-5,12-14] [--apply]  turn stretches of the video into Reel Kit reels (dry run first)
 //   node video.mjs review <channel folder> <export.csv ...>   a channel review from YouTube Studio CSV exports: reviews/<date>.md
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
+//   node video.mjs licensed <add|list|check|channels|credits|remove> ...  the channel's licensed assets (Uppbeat), licensed.mjs
+//   node video.mjs update [--apply] [--kit <dir>] [--channel <dir>] [--no-fetch]  the kit and this channel folder to the newest build, update.mjs
 //   node video.mjs youtube <login|upload|captions> ...     youtube.mjs
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -549,6 +553,8 @@ async function main() {
       console.log(`QA: ${r.result}  (build/qa.json)`);
       if (r.result !== 'PASS') process.exitCode = 1;
     });
+    case 'sources': return run(async () => { const S = await import('./sources.mjs'); return S.cli(openVideo(arg), flags); });
+    case 'archive': return run(async () => { const A = await import('./archive.mjs'); return A.cli(openVideo(arg), flags); });
     case 'tidy': return run(() => {
       const v = openVideo(arg), r = checks.tidy(v.dir, { apply: Boolean(flags.apply) });
       if (!r.items.length) return console.log('nothing to tidy');
@@ -560,6 +566,7 @@ async function main() {
           : 'no render times are recorded in this folder yet, so no estimate; count on several seconds per scene';
         console.log(`note: after this, the next  ${cmd}  draws all ${e.scenes} scenes again (free, nothing is left to reuse): ${time}.`);
       }
+      if (!r.archive.archived) console.log(`note: this episode is not archived (${r.archive.why}), tidy only removes scratch a render makes again, but the paid voice and out/ then exist in one place only. Copy them first:  video archive <folder> --to <rclone remote:path>  (it checks the copy by checksum and records it).`);
       if (!r.uploaded) console.log('note: not uploaded yet. Tidy after the upload if a scene may still change, so a fix only redraws that scene.');
       if (!flags.apply) console.log('run again with --apply to delete them');
     });
@@ -592,13 +599,15 @@ async function main() {
       const file = await drawDashboard(dashboardRoot(arg), { credits: Boolean(flags.credits) });
       if (flags.open) spawnSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [file], { stdio: 'ignore' });
     });
+    case 'licensed': return run(async () => { const L = await import('./licensed.mjs'); return L.cli(loose.slice(1), flags); });
+    case 'update': return run(async () => { const U = await import('./update.mjs'); return U.cli(flags); });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
       console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1).filter((l, i, a) => a.slice(0, i + 1).every((x) => x.startsWith('//'))).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
       if (cmd) process.exitCode = 1;
   }
 }
-const CHANGES = new Set(['new', 'voice', 'revoice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'youtube']);
+const CHANGES = new Set(['new', 'voice', 'revoice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'sources', 'archive', 'youtube']);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { loose } = parse(process.argv.slice(2));
   Promise.resolve(main()).then(() => {

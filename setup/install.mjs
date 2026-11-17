@@ -38,6 +38,13 @@ fs.rmSync(TARGET, { recursive: true, force: true });
 if (link) fs.symlinkSync(STUDIO, TARGET, process.platform === 'win32' ? 'junction' : 'dir');
 else fs.cpSync(STUDIO, TARGET, { recursive: true });
 say(true, `${link ? 'linked' : 'copied'} studio/ to ${TARGET}`);
+// where this kit lives and which build was installed, so `video update` finds the clone again (a linked engine needs no marker:
+// it points into the clone, and a file written there would land in the repo)
+if (!link) {
+  const { templateBuild, kitVersion } = await import('../studio/tools/update.mjs');
+  fs.writeFileSync(path.join(TARGET, '.install.json'), JSON.stringify({ kit: REPO, version: kitVersion(REPO), build: templateBuild(REPO), at: new Date().toISOString() }, null, 2) + '\n');
+}
 const tools = path.join(TARGET, 'tools', 'video.mjs');
 say(null, `the command: node ${tools} doctor`);
+say(null, 'later updates: in a channel folder, video update (a dry run), then video update --apply');
 console.log('\nNext: open Claude Code in this kit folder and type /video-setup. It makes a folder for your YouTube channel and asks about it.');

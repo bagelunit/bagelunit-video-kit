@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import * as licensed from './licensed.mjs';
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
@@ -259,9 +260,10 @@ export function approve(dir, which, { note = '', cfg = {}, researchOk = { ok: tr
     if (!fs.existsSync(mp4)) throw new Error('out/video.mp4 is missing: render first');
     const q = qaCurrent(dir); if (!q.ok) throw new Error(q.why);
     const fc = factsCurrent(dir, 'final'); if (!fc.ok) throw new Error(fc.why);
+    const lic = licensed.gate(dir);                       // licensed material: every asset recorded, file and hash match, the channel safelisted, credited in youtube.txt
     const files = Object.fromEntries(finalFiles(dir).map((x) => [path.basename(x), sha256File(x)]));
-    all.final = { at: now(), note, files, watched: Boolean(watched) };
-    logApproval(dir, 'Final', `approved${note ? `: ${note}` : ''}: video.mp4 ${files['video.mp4'].slice(0, 12)}${files['thumbnail.jpg'] ? `, thumbnail ${files['thumbnail.jpg'].slice(0, 12)}` : ''}${files['youtube.txt'] ? `, youtube.txt ${files['youtube.txt'].slice(0, 12)}` : ''}${files['pinned-comment.txt'] ? `, pinned comment ${files['pinned-comment.txt'].slice(0, 12)}` : ''}; QA PASS; fact check PASS; ${watched ? 'watched the whole final cut' : 'NOT marked as watched in full (the upload needs --watched)'}`);
+    all.final = { at: now(), note, files, watched: Boolean(watched), ...(lic.records.length ? { licensed: lic.records.map((r) => ({ id: r.id, type: r.type, title: r.title, artist: r.artist, credit: licensed.creditLine(r), sha256: r.sha256, channels: r.channels })) } : {}) };
+    logApproval(dir, 'Final', `approved${note ? `: ${note}` : ''}: video.mp4 ${files['video.mp4'].slice(0, 12)}${files['thumbnail.jpg'] ? `, thumbnail ${files['thumbnail.jpg'].slice(0, 12)}` : ''}${files['youtube.txt'] ? `, youtube.txt ${files['youtube.txt'].slice(0, 12)}` : ''}${files['pinned-comment.txt'] ? `, pinned comment ${files['pinned-comment.txt'].slice(0, 12)}` : ''}${lic.records.length ? `; licensed assets: ${lic.records.map((r) => `${r.id} (${r.type})`).join(', ')}` : ''}; QA PASS; fact check PASS; ${watched ? 'watched the whole final cut' : 'NOT marked as watched in full (the upload needs --watched)'}`);
   } else throw new Error('approve map or approve final');
   fs.writeFileSync(f, JSON.stringify(all, null, 2) + '\n');
   return all[which];
@@ -351,11 +353,22 @@ export function qaCurrent(dir) {
 const TIDY = ['build/scenes', 'build/video.mp4', 'build/draft.mp4', 'build/scenes-vertical', 'build/vertical.mp4', 'build/draft-vertical.mp4'];
 const sizeOf = (p) => { if (!fs.existsSync(p)) return 0; const s = fs.statSync(p); return s.isDirectory() ? fs.readdirSync(p).reduce((n, x) => n + sizeOf(path.join(p, x)), 0) : s.size; };
 
+// archive.json is written by `video archive` after rclone's checksum check. An episode counts as archived when that record is
+// verified, the finished video was in it, and out/video.mp4 is still the file that was copied.
+export function archiveState(dir) {
+  const rec = readJSON(path.join(dir, 'archive.json'), null);
+  if (!rec || !rec.verified) return { archived: false, why: 'never archived' };
+  if (!rec.finished) return { archived: false, why: `only the work in progress was archived (${rec.at})` };
+  const now = sha256File(path.join(dir, 'out', 'video.mp4'));
+  if (rec.video_sha256 && now !== rec.video_sha256) return { archived: false, why: 'out/video.mp4 changed after it was archived' };
+  return { archived: true, to: rec.to, at: rec.at };
+}
+
 export function tidy(dir, { apply = false } = {}) {
   const items = TIDY.map((x) => ({ rel: x, bytes: sizeOf(path.join(dir, x)) })).filter((x) => x.bytes > 0);
   const rerender = rerenderEstimate(dir, items);         // counted before anything is removed
   if (apply) for (const x of items) fs.rmSync(path.join(dir, x.rel), { recursive: true, force: true });
-  return { items, bytes: items.reduce((n, x) => n + x.bytes, 0), uploaded: fs.existsSync(path.join(dir, 'out', 'youtube-published.json')), rerender };
+  return { items, bytes: items.reduce((n, x) => n + x.bytes, 0), uploaded: fs.existsSync(path.join(dir, 'out', 'youtube-published.json')), rerender, archive: archiveState(dir) };
 }
 
 // After tidy the next render of that shape draws every scene again (nothing is left to reuse). For each shape whose scene

@@ -18,7 +18,18 @@ At the start of a session, read `brand/brand.json`. If `"name"` is empty, the ch
 | `brand/voice.md` | how the channel talks; read before every outline and script |
 | `brand/facts.md` | facts the owner cleared for this channel, and the "Never say" list (the fact check reads both) |
 | `videos/<name>/` | one folder per video: research, map, script, scenes, voice, renders, approvals (the work order is the skill's `SKILL.md`) |
+| `brand/licensed/` | licensed material from Uppbeat: `assets.json` (the register), `README.md` (how to download by hand and record), the files by type |
+| `scripts/nightly-backup.sh` | a backup template (not scheduled): `video archive` on every video to an rclone destination; read its top lines, set `BAGELUNIT_BACKUP_TO` |
 | `videos/video-dashboard.html` | the dashboard (`video dashboard --open`); it redraws itself after every command that changes a video |
+
+Skills in this folder (type the command):
+
+| Command | What it does |
+|---|---|
+| `/bagelunit-video <topic>` | makes a video, or carries one on (section 2) |
+| `/channel-setup` | sets up or changes this channel |
+| `/db` | redraws and opens the dashboard (`video dashboard --open`) |
+| `/video-update` | updates the kit and this folder to the newest build (`video update`, a dry run first, then `--apply`) |
 
 ## 2. Making a video
 
@@ -35,7 +46,7 @@ At the start of a session, read `brand/brand.json`. If `"name"` is empty, the ch
 ## 4. Rules that always stay on
 
 1. Never ask for, print or store a key or a token. The ElevenLabs key is the owner's, in the file the Reel Kit setup made.
-2. Everything on screen is original: no real people, no other companies' logos or characters, no outside footage or music. Only music the owner has the rights to.
+2. Everything on screen is original: no real people, no other companies' logos or characters, no outside footage or music. The one exception is licensed material from **Uppbeat** (music, sound effects, stock video, motion graphics, LUTs), and only through `brand/licensed/`: the owner downloads it by hand, every asset is recorded (`video licensed add`), the channel is safelisted in Uppbeat (Account, Safelist) before a YouTube upload, and it is used by id (`brand/licensed/README.md`). Licensed video and overlays decorate; they never carry the story. `video approve ... final` refuses while `video licensed check` fails. Licensed material is for YouTube only.
 3. Report what actually happened: a render with errors is not done, a stand-in voice is not a voice, a fact check that was not re-read is not a PASS.
 4. Anything scored must reach 90 or more; below that, redo and rescore.
 5. No em dashes in anything written.

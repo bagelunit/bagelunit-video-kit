@@ -966,4 +966,139 @@ await test('a render that draws scenes records how long it took (build/render-ti
   assert.deepEqual({ ...log[0], at: 'x' }, { at: 'x', shape: 'wide', scenes: 10, rendered: 2, seconds: 20 });
 });
 
+
+/* ── sources, archive, vertical safe zone ─────────────────────────────────────────────────────────────────────────────── */
+const sources = await import('../studio/tools/sources.mjs');
+const reply = (status, json, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k.toLowerCase()] ?? null }, json: async () => json });
+const noSleep = async () => {};
+const sourceFolder = (research, extra = {}) => { const d = tmp(); fs.mkdirSync(path.join(d, 'out'), { recursive: true }); fs.writeFileSync(path.join(d, 'research.md'), research); for (const [f, t] of Object.entries(extra)) fs.writeFileSync(path.join(d, f), t); return d; };
+
+await test('sources: finds DOIs and public links, tidies punctuation, skips private and key-bearing URLs', () => {
+  assert.deepEqual(sources.findDois('See 10.1016/0017-9310(77)90057-6. And (10.1038/nature12373), also 10.1038/nature1'), ['10.1016/0017-9310(77)90057-6', '10.1038/nature12373', '10.1038/nature1'].filter((x) => x !== '10.1038/nature1'));
+  const links = sources.findLinks('a https://example.com/a-(1974).aspx, b http://localhost:3000/x c http://192.168.1.4/y d https://example.org/p?api_key=abc e https://user:pw@example.org/ f https://web.archive.org/web/1/https://x.org g https://example.net/page.');
+  assert.deepEqual(links, ['https://example.com/a-(1974).aspx', 'https://example.net/page']);
+});
+
+await test('sources: Crossref lists real title, author and year; an unknown DOI fails; DataCite is the fallback; writes source-safety.md/json', async () => {
+  const d = sourceFolder('Paper 10.1000/good and 10.1000/missing and 10.5281/data');
+  const urls = [];
+  const fetchImpl = async (u, o) => {
+    urls.push([u, o.headers['User-Agent']]);
+    if (u.includes('crossref.org/works/10.1000%2Fgood')) return reply(200, { message: { title: ['A Real Title'], author: [{ family: 'Okafor' }], issued: { 'date-parts': [[2019]] }, 'container-title': ['Journal of Tests'] } });
+    if (u.includes('datacite.org/dois/10.5281%2Fdata')) return reply(200, { data: { attributes: { titles: [{ title: 'A Dataset' }], creators: [{ familyName: 'Lind' }], publicationYear: 2021, publisher: 'Repo' } } });
+    return reply(404, {});
+  };
+  const r = await sources.checkSources(d, { fetchImpl, sleep: noSleep, noArchive: true, log: () => {} });
+  assert.equal(r.failed, 1);
+  const good = r.dois.find((x) => x.doi === '10.1000/good');
+  assert.deepEqual([good.title, good.first_author, good.year], ['A Real Title', 'Okafor', 2019]);
+  assert.equal(r.dois.find((x) => x.doi === '10.5281/data').source, 'DataCite');
+  assert.match(r.dois.find((x) => x.doi === '10.1000/missing').why, /not found/);
+  const md = fs.readFileSync(path.join(d, 'source-safety.md'), 'utf8');
+  assert.match(md, /OK 10\.1000\/good: Okafor \(2019\), "A Real Title"/); assert.match(md, /FAIL 10\.1000\/missing/);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(d, 'source-safety.json'), 'utf8')).dois.length === 3);
+  assert.ok(urls.every(([, ua]) => /^BagelUnitVideoKit\//.test(ua) && !/@|\/Users\//.test(ua)), 'a polite User-Agent with no personal details');
+});
+
+await test('sources: a 429 waits as long as the server says and retries; a dead service is "did not answer", not "not found"', async () => {
+  const waits = []; let hits = 0;
+  const fetchImpl = async () => (++hits === 1 ? reply(429, {}, { 'retry-after': '2' }) : reply(200, { message: { title: ['T'], author: [], issued: {}, 'container-title': [] } }));
+  const d = sourceFolder('10.1000/x');
+  const r = await sources.checkSources(d, { fetchImpl, sleep: async (ms) => waits.push(ms), noArchive: true, log: () => {} });
+  assert.equal(r.failed, 0); assert.ok(waits.includes(2000));
+  const dead = await sources.checkSources(sourceFolder('10.1000/y'), { fetchImpl: async () => { throw new Error('offline'); }, sleep: noSleep, noArchive: true, log: () => {} });
+  assert.equal(dead.failed, 1); assert.match(dead.dois[0].why, /did not answer/);
+});
+
+await test('sources: Wayback keeps a recent snapshot, sends the rest to Save Page Now, and --no-archive sends nothing', async () => {
+  const now = Date.UTC(2026, 10, 17), calls = [];
+  const d = sourceFolder('https://a.example/recent and https://b.example/old and http://localhost/x', { 'out/youtube.txt': 'T\n\nhttps://b.example/old' });
+  const fetchImpl = async (u) => {
+    calls.push(u);
+    if (u.includes('/wayback/available')) return u.includes('a.example') ? reply(200, { archived_snapshots: { closest: { available: true, url: 'https://web.archive.org/web/20261110000000/https://a.example/recent', timestamp: '20261110000000' } } }) : reply(200, { archived_snapshots: {} });
+    if (u.startsWith('https://web.archive.org/save/')) return reply(200, {}, { 'content-location': '/web/20261117/https://b.example/old' });
+    throw new Error('unexpected ' + u);
+  };
+  const r = await sources.checkSources(d, { fetchImpl, sleep: noSleep, now, noDoi: true, log: () => {} });
+  assert.equal(r.links.length, 2);
+  assert.equal(r.links.find((l) => l.url.includes('a.example')).saved_now, false);
+  assert.equal(r.links.find((l) => l.url.includes('b.example')).saved_now, true);
+  assert.ok(!calls.some((u) => u.includes('localhost')));
+  calls.length = 0;
+  await sources.checkSources(d, { fetchImpl, sleep: noSleep, noArchive: true, noDoi: true, log: () => {} });
+  assert.equal(calls.length, 0);
+});
+
+await test('video sources: exit code 1 when a DOI fails (no network: --no-archive and an offline Crossref)', () => {
+  const d = sourceFolder('10.1000/nope'); fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: scenes.sceneStyleIds()[0] }));
+  const stub = path.join(tmp(), 'offline.mjs');
+  fs.writeFileSync(stub, `globalThis.fetch = async () => ({ status: 404, ok: false, headers: { get: () => null }, json: async () => ({}) });\nprocess.argv.splice(1, 1, ${JSON.stringify(path.join(REPO, 'studio', 'tools', 'video.mjs'))});\nawait import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'video.mjs'))});\n`);
+  const r = spawnSync(process.execPath, [stub, 'sources', d, '--no-archive'], { encoding: 'utf8' });
+  assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stdout, /DOI FAIL  10\.1000\/nope/);
+});
+
+const archiveFolder = ({ finished = true } = {}) => {
+  const d = tmp(); fs.mkdirSync(path.join(d, 'out'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: scenes.sceneStyleIds()[0] })); fs.writeFileSync(path.join(d, 'script.txt'), 'Hello.');
+  if (finished) fs.writeFileSync(path.join(d, 'out', 'video.mp4'), 'video-bytes');
+  return d;
+};
+const archiveMod = await import('../studio/tools/archive.mjs');
+const fakeRclone = (status = {}) => { const calls = []; return { calls, run: (args) => { calls.push(args); return { status: status[args[0]] ?? 0, stdout: '', stderr: status[args[0]] ? 'boom' : '' }; } }; };
+
+await test('archive: rclone copy then checksum check, filters keep scratch out, archive.json written, tidy stops warning', () => {
+  const d = archiveFolder(), f = fakeRclone();
+  assert.equal(checks.tidy(d).archive.archived, false);
+  const rec = archiveMod.archive(d, { to: 'gdrive:Backups', run: f.run, log: () => {} });
+  assert.deepEqual(f.calls.map((c) => c[0]), ['copy', 'check']);
+  assert.equal(f.calls[0][2], `gdrive:Backups/${path.basename(d)}`);
+  assert.ok(f.calls[0].includes('--checksum') && f.calls[1].includes('--one-way'));
+  const rules = f.calls[0].filter((_, i, a) => a[i - 1] === '--filter');
+  assert.ok(rules.includes('+ /out/**') && rules.includes('+ /build/voice*/**') && rules.at(-1) === '- **' && !rules.some((r) => /scenes\*|\.mp4/.test(r) && r.startsWith('+ /build')));
+  assert.equal(rec.verified, true); assert.equal(checks.tidy(d).archive.archived, true);
+  fs.writeFileSync(path.join(d, 'out', 'video.mp4'), 'changed');
+  assert.match(checks.tidy(d).archive.why, /changed after/);
+});
+
+await test('archive: a failed copy or a failed check records nothing; no destination or a bad one is refused; dry run records nothing', () => {
+  const d = archiveFolder();
+  assert.throws(() => archiveMod.archive(d, { to: 'gdrive:B', run: fakeRclone({ copy: 1 }).run, log: () => {} }), /rclone copy failed/);
+  assert.throws(() => archiveMod.archive(d, { to: 'gdrive:B', run: fakeRclone({ check: 1 }).run, log: () => {} }), /does not match/);
+  assert.ok(!fs.existsSync(path.join(d, 'archive.json')));
+  assert.throws(() => archiveMod.archive(d, { run: fakeRclone().run }), /--to/);
+  assert.throws(() => archiveMod.archive(d, { to: 'nowhere', run: fakeRclone().run }), /not an rclone destination/);
+  const f = fakeRclone(); archiveMod.archive(d, { to: 'gdrive:B', run: f.run, dry: true, log: () => {} });
+  assert.deepEqual(f.calls.map((c) => c[0]), ['copy']); assert.ok(f.calls[0].includes('--dry-run')); assert.ok(!fs.existsSync(path.join(d, 'archive.json')));
+  const wip = archiveFolder({ finished: false }); archiveMod.archive(wip, { to: 'gdrive:B', run: fakeRclone().run, log: () => {} });
+  assert.equal(checks.tidy(wip).archive.archived, false, 'work in progress only is not "archived" for tidy');
+  assert.equal(archiveMod.targetFor(d, {}, { BAGELUNIT_ARCHIVE_TO: 'env:x' }), 'env:x');
+  assert.equal(archiveMod.targetFor(d, { to: 'flag:y' }, { BAGELUNIT_ARCHIVE_TO: 'env:x' }), 'flag:y');
+});
+
+await test('video tidy warns, does not block, when the episode is not archived; stays quiet when it is', () => {
+  const d = archiveFolder(); fs.mkdirSync(path.join(d, 'build', 'scenes'), { recursive: true }); fs.writeFileSync(path.join(d, 'build', 'scenes', '001.mp4'), Buffer.alloc(10));
+  const run = () => spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'tidy', d, '--apply'], { encoding: 'utf8' });
+  let r = run(); assert.equal(r.status, 0, r.stderr); assert.match(r.stdout, /not archived .*video archive <folder> --to/);
+  fs.writeFileSync(path.join(d, 'archive.json'), JSON.stringify({ to: 'x:y', at: 'now', verified: true, finished: true, video_sha256: checks.sha256File(path.join(d, 'out', 'video.mp4')) }));
+  fs.mkdirSync(path.join(d, 'build', 'scenes'), { recursive: true }); fs.writeFileSync(path.join(d, 'build', 'scenes', '001.mp4'), Buffer.alloc(10));
+  r = run(); assert.equal(r.status, 0); assert.doesNotMatch(r.stdout, /not archived/);
+});
+
+await test('nightly-backup template is a bash script that refuses without a destination and is not scheduled', () => {
+  const f = path.join(REPO, 'template', 'scripts', 'nightly-backup.sh'), t = fs.readFileSync(f, 'utf8');
+  assert.match(t, /^#!\/usr\/bin\/env bash/); assert.match(t, /BAGELUNIT_BACKUP_TO/); assert.match(t, /channels\.json/);
+  assert.ok(!/crontab|launchctl|schtasks/.test(t.replace(/^#.*$/gm, '')), 'nothing here schedules itself');
+  assert.ok(!/\/Users\/|studio-drive|LaCie/.test(t), 'no hard-coded machine paths');
+  if (process.platform !== 'win32') { const r = spawnSync('bash', [f], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_BACKUP_TO: '' } }); assert.equal(r.status, 2); assert.match(r.stdout, /BAGELUNIT_BACKUP_TO/); }
+});
+
+await test('vertical safe zone is the Reel Kit\'s: top 250, bottom 300, left 60, right 120 (wide stays 5%)', () => {
+  const code = `const s = await import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'scenes.mjs').replace(/\\/g, '/'))}); const wide = s.safeBox(); s.setShape('vertical'); console.log(JSON.stringify({ wide, vertical: s.safeBox() }));`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  const o = JSON.parse(r.stdout.trim().split('\n').pop());
+  assert.deepEqual(o.vertical, [60, 250, 1080 - 120, 1920 - 300]); assert.deepEqual(o.wide, [96, 54, 1920 - 96, 1080 - 54]);
+  assert.ok(!/bottom 450|bottom: 450/.test(fs.readFileSync(path.join(REPO, 'studio', 'SKILL.md'), 'utf8')));
+});
+
 console.log(n ? `\n${n} test(s) passed` : '');

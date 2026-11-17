@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeChannelBuild } from '../studio/tools/update.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEMPLATE = path.join(REPO, 'template');
@@ -48,6 +49,7 @@ export function makeWorkspace(arg, { reels = null, dry = false, registry = path.
   if (dry) return plan;
   fs.mkdirSync(dir, { recursive: true });
   fs.cpSync(TEMPLATE, dir, { recursive: true });
+  writeChannelBuild(dir, REPO);                     // which kit build this folder was made from, for `video update`
   const bf = path.join(dir, 'brand', 'brand.json'), brand = readJSON(bf, {});
   brand.slug = slugOf(path.basename(dir));
   if (src) {
