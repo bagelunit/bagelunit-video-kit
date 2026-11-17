@@ -10,6 +10,10 @@
 //   node video.mjs voice <folder> [--voice id] [--speed 1] [--force]  voice script.txt in chunks (Reel Kit voice.py), one audio file
 //   node video.mjs revoice <folder> --line "old words" --to "new words" [--vertical] [--apply] [--use]  voice one line again
 //                                                          with the sentence before it as lead-in, spliced into a copy of the voice
+//   node video.mjs script <folder> [--minutes N]           the script check (build/scriptcheck.md): length, hook, jargon, long sentences, human score
+//   node video.mjs script <folder> --human | --hash | --status      the human score / the script's fingerprint / is the gate before the voice open
+//   node video.mjs script <folder> --record --score NN [--notes ".."] [--by ".."]   the script review line (90 or more) the voice needs
+//   node video.mjs script <folder> --skip-script-review "reason"    the OWNER's override of the review, with a reason (never of the fact check)
 //   node video.mjs facts <folder> [--scope script|final]   fact check: every number said or shown is in research.md
 //   node video.mjs facts <folder> record --result PASS|FAIL [--scope s] [--note t]   the verdict after re-reading sources
 //   node video.mjs approve <folder> map|final [--watched] [--note t]   the person's go-ahead (map: before the voice; final, after
@@ -19,6 +23,12 @@
 //   node video.mjs chapters <folder>                       out/chapters.txt (YouTube chapters) from the scenes' "chapter"
 //   node video.mjs thumbnail <folder> [--at s | --scene n | --image file [--fit cover|contain] [--bg 0E0E14]] [--text "WORDS *ONE*"] [--plain] [--name b | --use b]  out/thumbnail.jpg (1280x720)
 //   node video.mjs captions <folder>                       out/captions.<lang>.srt from the word clock (the upload adds it)
+//   node video.mjs pace <folder> [--json]                  does the picture keep changing (scene lengths, repeats, chapters): build/pace.json
+//   node video.mjs musicplan <folder> [--json]             does the music follow the chapters (the plan in outline.md, video.json "music", the register)
+//   node video.mjs captionscheck <folder|file.srt> [--words] [--lang en] [--max-cps 17] [--json]  can the captions be read in time
+//   node video.mjs mixcheck <folder|video.mp4> [--json]    the finished mix: voice level, music under the voice, loudness, chapters (Python 3, ffmpeg): build/mix.json
+//   node video.mjs thumbcheck <folder|thumbnail.jpg> [--no-ocr] [--min-h 60] [--lines lines.json] [--json]  is the thumbnail readable small (Python 3)
+//   node video.mjs abtest --a <clicks> <impressions> --b <clicks> <impressions> [--c ..] [--min-impressions 1000] [--metric thumbnail] [--json]  is one variant really better (Python 3)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs sources <folder> [--no-archive] [--no-doi]  check every DOI at Crossref and archive the links: source-safety.md
 //   node video.mjs archive <folder> --to <remote:path> [--dry-run]  rclone copy of out/, text and voice, checksum-verified: archive.json
@@ -37,6 +47,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as scenes from './scenes.mjs';
+import * as scriptgate from './scriptgate.mjs';
 import * as checks from './checks.mjs';
 import * as licensed from './licensed.mjs';
 import * as blender from './blender.mjs';
@@ -130,9 +141,21 @@ export function chunkScript(text, max = CHUNK) {
   return out;
 }
 
-// a chunk already voiced with the same words is reused by voice.py for free, so only the others count against the credits
-export const chunkDone = (d, text) => fs.existsSync(path.join(d, 'audio', 'vo.mp3')) && fs.existsSync(path.join(d, 'script.txt')) && fs.readFileSync(path.join(d, 'script.txt'), 'utf8').trim() === text.trim();
-export function creditCheck(todo, root, flags) {
+// a chunk already voiced with the same words is reused by voice.py for free, so only the others count against the credits.
+// With a provider given, a chunk whose own build/voice_source.json names another provider is not done (it is voiced again).
+export const chunkDone = (d, text, provider) => {
+  if (!(fs.existsSync(path.join(d, 'audio', 'vo.mp3')) && fs.existsSync(path.join(d, 'script.txt')) && fs.readFileSync(path.join(d, 'script.txt'), 'utf8').trim() === text.trim())) return false;
+  const was = readJSON(path.join(d, 'build', 'voice_source.json'), null);
+  return !(provider && was?.provider && was.provider !== provider);
+};
+// Only ElevenLabs has credits. A built-in or own-command voice passes ("not needed") and never blocks on characters; a provider
+// of None (an older caller) keeps the old ElevenLabs check.
+export function creditCheck(todo, root, flags, provider) {
+  if (provider && provider !== 'elevenlabs') {
+    const why = provider === 'local' ? 'the free built-in voice has no credits' : provider === 'command' ? "your own voice command: any charges are that service's, not counted here" : `${provider} is not counted here (ElevenLabs characters do not apply)`;
+    console.log(`credits check: not needed, ${why}`);
+    return;
+  }
   const budget = path.join(REEL_ENGINE, 'tools', 'budget.py');
   if (!todo.length || !fs.existsSync(budget)) return;
   fs.mkdirSync(root, { recursive: true });
@@ -140,7 +163,81 @@ export function creditCheck(todo, root, flags) {
   fs.writeFileSync(f, todo.join('\n\n') + '\n');
   const r = spawnSync(process.env.PYTHON || 'python3', [budget, f, '--takes', '1'], { encoding: 'utf8' });
   process.stdout.write((r.stdout || '').split('\n').filter(Boolean).map((l) => `credits check: ${l}\n`).join(''));
-  if (r.status === 1 && !flags['skip-credit-check']) die('not voicing: not enough ElevenLabs characters left for this script. Top up, wait for the monthly reset, shorten the script, or split the video into parts (or run again with --skip-credit-check).');
+  if (r.status === 1 && !flags['skip-credit-check']) die('not voicing: not enough ElevenLabs characters left for this script. Top up, wait for the monthly reset, shorten the script, or split the video into parts (or run again with --skip-credit-check). With no key the free built-in voice needs no credits: video suggest elevenlabs shows the options.');
+}
+
+/* ── which voice speaks ─────────────────────────────────────────────────────────────────────────────────────────────── */
+// The Reel Kit's voice tool (tools/voice.py) chooses between ElevenLabs and the free built-in voice (this computer's own speech
+// engine). The Video Kit mirrors that choice so it can say what will happen BEFORE it starts, skip the ElevenLabs credit check
+// for a voice that has none, and record who spoke. An engine without tools/localvoice.py is older: it only knows ElevenLabs.
+const OWN_PROVIDERS = ['local', 'command', 'auto'];
+const BRAND_VOICE_KEYS = ['provider', 'command', 'local_engine', 'local_voice', 'local_rate', 'local_model', 'chunk_chars', 'timings'];
+export function engineSupport(engine = REEL_ENGINE) {
+  const voicePy = path.join(engine, 'tools', 'voice.py');
+  const installed = fs.existsSync(voicePy);
+  let builtIn = false;
+  try { builtIn = installed && fs.existsSync(path.join(engine, 'tools', 'localvoice.py')) && fs.readFileSync(voicePy, 'utf8').includes('voice_source'); } catch {}
+  return { installed, builtIn };
+}
+const reelCfgDir = () => { const h = os.homedir(), n = path.join(h, '.config', 'bagelunit-reels'), o = path.join(h, '.config', 'susanoo-reels'); return fs.existsSync(n) || !fs.existsSync(o) ? n : o; };
+export function elevenKeyReady() {   // only whether a non-empty key is saved; the key itself is never read out or printed
+  if ((process.env.ELEVENLABS_API_KEY || '').trim()) return true;
+  for (const f of [path.join(reelCfgDir(), 'elevenlabs.key'), path.join(os.homedir(), '.config', 'elevenlabs', 'key')]) {
+    try { if (fs.statSync(f).isFile() && fs.readFileSync(f, 'utf8').trim()) return true; } catch {}
+  }
+  return false;
+}
+export function whichSync(name, { env = process.env, platform = process.platform } = {}) {
+  const dirs = String(env.PATH ?? env.Path ?? '').split(platform === 'win32' ? ';' : ':').filter(Boolean);
+  const exts = platform === 'win32' ? ['', ...String(env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter(Boolean)] : [''];
+  for (const d of dirs) for (const e of exts) { const f = path.join(d, name + e); try { if (fs.statSync(f).isFile()) return f; } catch {} }
+  return null;
+}
+// [engine, why]: the built-in speech engine voice.py would use (macOS say, Windows SAPI, Linux piper or espeak-ng)
+export function findBuiltInEngine(opts = {}, { which = whichSync, platform = process.platform } = {}) {
+  const model = opts.local_model, modelOk = model && (() => { try { return fs.statSync(String(model).replace(/^~(?=$|[\\/])/, os.homedir())).isFile(); } catch { return false; } })();
+  const exes = { piper: which('piper'), say: which('say'), 'espeak-ng': which('espeak-ng'), espeak: which('espeak'), sapi: platform === 'win32' ? which('powershell') || which('pwsh') : null };
+  if (opts.local_engine) {
+    if (!(opts.local_engine in exes)) return [null, `unknown local_engine "${opts.local_engine}" (say, piper, espeak-ng, espeak or sapi)`];
+    if (!exes[opts.local_engine]) return [null, `local_engine "${opts.local_engine}" is not installed here`];
+    if (opts.local_engine === 'piper' && !modelOk) return [null, 'piper needs voice.local_model: the path of a piper .onnx voice file'];
+    return [opts.local_engine, exes[opts.local_engine]];
+  }
+  for (const name of ['piper', 'say', 'espeak-ng', 'espeak', 'sapi']) { if (exes[name] && (name !== 'piper' || modelOk)) return [name, exes[name]]; }
+  return [null, 'no built-in speech engine found: ' + ({ win32: 'Windows ships one (System.Speech through PowerShell), but PowerShell was not found', darwin: '`say` ships with macOS but was not found' }[platform] || 'install espeak-ng (for example: sudo apt install espeak-ng) or piper')];
+}
+// the same choice as the engine's choose_provider: --provider, else the settings, then (for elevenlabs and auto) the key, then the built-in voice
+export function chooseProvider(opts, requested, key, engineOk) {
+  const want = requested && requested !== true ? requested : opts.provider || 'elevenlabs';
+  if (['local', 'command', 'openai', 'file'].includes(want)) return { provider: want };
+  if (!['elevenlabs', 'auto'].includes(want)) return { provider: want };
+  if (requested && requested !== true && want === 'elevenlabs') return { provider: 'elevenlabs' };
+  if (key) return { provider: 'elevenlabs' };
+  if (engineOk) return { provider: 'local', auto: true };
+  return { provider: 'standin' };
+}
+// the settings the engine will see for a chunk folder: saved config < the brand's voice choices < the video's own voice
+export function voiceOptions(video, voiceCfg) {
+  const brand = checks.findBrand(video.dir), bv = Object.fromEntries(Object.entries(brand?.cfg.voice || {}).filter(([k, v]) => BRAND_VOICE_KEYS.includes(k) && v !== '' && v != null));
+  const opts = { provider: 'elevenlabs', ...(readJSON(path.join(reelCfgDir(), 'config.json'), {})?.voice || {}), ...bv, ...(voiceCfg || {}) };
+  if (OWN_PROVIDERS.includes(bv.provider) && [undefined, null, '', 'elevenlabs'].includes(voiceCfg?.provider)) opts.provider = bv.provider;
+  return opts;
+}
+export const UPGRADE = '`video suggest elevenlabs` for a natural one';
+// What will speak, and the plain sentence to print before it starts ({ provider, say, note }). Exits when nothing can speak.
+export function selectVoice(video, flags, voiceCfg, { engine = REEL_ENGINE, key = elevenKeyReady(), which } = {}) {
+  const sup = engineSupport(engine), requested = flags.provider && flags.provider !== true ? String(flags.provider) : undefined;
+  if (!sup.builtIn) {
+    if (!key && !requested) return { provider: 'elevenlabs', legacy: true, note: `the installed Reel Kit engine is older than the free built-in voice, and there is no ElevenLabs key. Update the Reel Kit (/kit-update in a brand folder, or bash setup/install.sh in the Reel Kit folder) and run this again, or save an ElevenLabs key (Reel Kit SETUP.md section 3). Until then the voice step stops at the key; video stand-in makes a silent preview tone.` };
+    return { provider: requested || 'elevenlabs', legacy: true, note: null };
+  }
+  const opts = voiceOptions(video, voiceCfg), [eng, why] = findBuiltInEngine(opts, which ? { which } : {});
+  const c = chooseProvider(opts, requested, key, Boolean(eng));
+  if (c.provider === 'standin') die(`no real voice is possible yet: there is no ElevenLabs key and ${why}. Any one fixes it: install a speech engine (Linux: espeak-ng or piper), save a key (${UPGRADE}), or set brand.json voice.provider "command" with your own text-to-speech command. For a silent preview only: video stand-in <folder> (a tone, never for posting).`);
+  const say = c.provider === 'local'
+    ? (c.auto ? `no ElevenLabs key: using the free built-in voice (basic quality, ${eng}); ${UPGRADE}` : `using the free built-in voice (basic quality, ${eng}); ${UPGRADE}`)
+    : c.provider === 'command' ? 'using your own voice command (voice.command); any charges are that service\'s' : null;
+  return { provider: c.provider, say, note: null, engine: c.provider === 'local' ? eng : null };
 }
 
 // What every paid voice call needs first (research, the map's go-ahead, a current script fact check, the Reel Kit's voice
@@ -152,6 +249,8 @@ export function voiceSetup(video, flags, { verb = 'voicing' } = {}) {
   if (!map.ok) die(`not ${verb} yet: ${map.why}.`);
   const facts = checks.factsCurrent(video.dir, 'script');
   if (!facts.ok) die(`not ${verb} yet: ${facts.why}.`);
+  const sp = scriptgate.scriptGate(video.dir, flags);   // the script review (90 or more, for these exact words); only the owner skips it, with a reason
+  if (sp) die(`not ${verb} yet: ${sp}`);
   const py = path.join(REEL_ENGINE, 'tools', 'voice.py');
   if (!fs.existsSync(py)) die(`the Reel Kit engine is not installed (${py} is missing). Run bash setup/install.sh in the Reel Kit first.`);
   // natural pace for long videos: the Reel Kit's voice tool speeds reels up (x1.15); a video keeps x1.0 unless video.json "voice_speed" says otherwise
@@ -160,34 +259,52 @@ export function voiceSetup(video, flags, { verb = 'voicing' } = {}) {
   if (speed < 0.7 || speed > 1.3) die(`voice_speed ${speed} is out of range (0.7 to 1.3)`);
   const voiceCfg = video.cfg.voice || (brand?.cfg.voice?.voice_id ? { voice_id: brand.cfg.voice.voice_id, ...(brand.cfg.voice.provider ? { provider: brand.cfg.voice.provider } : {}) } : undefined);
   const extra = flags.voice && flags.voice !== true ? ['--voice', flags.voice] : [];
-  return { py, speed, voiceCfg, extra };
+  const sel = selectVoice(video, flags, voiceCfg);
+  if (sel.note) console.log(`note: ${sel.note}`);
+  if (sel.say) console.log(`voice: ${sel.say}`);
+  const providerArgs = flags.provider && flags.provider !== true ? ['--provider', String(flags.provider)] : [];
+  return { py, speed, voiceCfg, extra, provider: sel.provider, providerArgs };
+}
+
+// the engine's own notes (stderr) once each: a long video has many chunks and each one prints the same advice
+const ONCE = /^voice: (built-in voice|no ElevenLabs key|estimated timings|voiced by your own command)/;
+export function relay(stderr, seen, out = (l) => process.stderr.write(l + '\n')) {
+  for (const l of String(stderr || '').split(/\r?\n/)) {
+    if (!l.trim()) continue;
+    if (ONCE.test(l)) { if (seen.has(l)) continue; seen.add(l); }
+    out(l);
+  }
 }
 
 function voice(video, flags) {
   const script = path.join(video.dir, 'script.txt');
   if (!fs.existsSync(script)) die('no script.txt to voice');
-  const { py, speed, voiceCfg } = voiceSetup(video, flags);
+  const { py, speed, voiceCfg, provider, providerArgs } = voiceSetup(video, flags);
   if (scenes.standInIsActive?.(video.dir)) fs.rmSync(path.join(video.dir, 'audio', 'vo.mp3'), { force: true });
   const chunks = chunkScript(fs.readFileSync(script, 'utf8'));
   const root0 = path.join(video.dir, 'build', 'voice');
-  creditCheck(chunks.filter((text, i) => !chunkDone(path.join(root0, String(i + 1).padStart(3, '0')), text)), root0, flags);
+  creditCheck(chunks.filter((text, i) => !chunkDone(path.join(root0, String(i + 1).padStart(3, '0')), text, provider)), root0, flags, provider);
   const root = path.join(video.dir, 'build', 'voice');
-  const parts = [];
+  const parts = [], seen = new Set();
   chunks.forEach((text, i) => {
     const d = path.join(root, String(i + 1).padStart(3, '0'));
     fs.mkdirSync(path.join(d, 'audio'), { recursive: true });
     fs.writeFileSync(path.join(d, 'script.txt'), text + '\n');
     fs.writeFileSync(path.join(d, 'reel.json'), JSON.stringify({ voice: voiceCfg }, null, 1) + '\n');
     console.log(`voice: chunk ${i + 1}/${chunks.length} (${text.length} characters)`);
-    const args = [py, d, '--speed', String(speed), ...(flags.voice && flags.voice !== true ? ['--voice', flags.voice] : []), ...(flags.force ? ['--force'] : [])];
-    const r = spawnSync(process.env.PYTHON || 'python3', args, { stdio: 'inherit' });
-    if (r.status !== 0) die(`voice.py stopped on chunk ${i + 1}. Chunks already made are kept and not paid for again; fix the cause and run voice again.`);
+    const args = [py, d, '--speed', String(speed), ...(flags.voice && flags.voice !== true ? ['--voice', flags.voice] : []), ...providerArgs, ...(flags.force ? ['--force'] : [])];
+    const r = spawnSync(process.env.PYTHON || 'python3', args, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', maxBuffer: 1 << 26 });
+    relay(r.stderr, seen);
+    if (r.status !== 0) die(`voice.py stopped on chunk ${i + 1}. Chunks already made are kept (and an ElevenLabs chunk is not paid for again); fix the cause and run voice again.`);
     parts.push(d);
   });
   let plan = [];
   try { plan = scenes.planOf(video.dir, video.cfg.style).scenes; } catch (e) { if (fs.existsSync(path.join(video.dir, 'scenes.json'))) console.log(`note: scenes.json could not be read (${e.message}), so no scene "pause" went into the voice`); }
   try { joinVoice(video.dir, parts, { plan }); } catch (e) { die(e.message); }
   fs.rmSync(path.join(video.dir, 'build', 'voice-stand-in.json'), { force: true });
+  const src = checks.recordVoice(video.dir, parts, { provider });
+  console.log(`voice: spoken by ${checks.voiceLabel(src)} → build/voice_source.json, approvals.md`);
+  if (src.timings === 'estimated') console.log(`WARNING: the word times are estimated (Whisper is not installed or not used), so captions and cuts may drift. ${checks.WHISPER_ADVICE} then run video voice again (free: nothing is voiced again).`);
 }
 
 // The chunks joined into audio/vo.mp3 with a breath between them, their word times shifted by each chunk's start
@@ -348,6 +465,7 @@ function captionsCmd(video) {
   fs.writeFileSync(recFile, JSON.stringify(rec, null, 1) + '\n');
   const longest = Math.max(...cues.flatMap((c) => c.lines.map((l) => l.length)));
   console.log(`out/captions.${lang}.srt: ${cues.length} captions from build/words.json (lines up to ${longest} characters). The upload adds it to the video (it needs the full YouTube sign-in); for a video already up: video youtube captions <folder>.`);
+  if (readJSON(path.join(video.dir, 'build', 'voice_source.json'), null)?.timings === 'estimated') console.log(`WARNING: the word times are estimated (Whisper was not used), so these captions may drift from the voice. ${checks.WHISPER_ADVICE}`);
   if (scenes.standInIsActive?.(video.dir)) console.log('WARNING: these are the STAND-IN\'s made-up word times. Make the captions again after the real voice (video voice, then video captions).');
 }
 
@@ -496,7 +614,7 @@ export async function drawDashboard(root, { credits = false, quiet = false } = {
     if (info && Number.isFinite(info.left)) {
       fs.mkdirSync(path.join(root, '.cache'), { recursive: true });
       fs.writeFileSync(path.join(root, '.cache', 'video-credits.json'), JSON.stringify({ ...info, at: new Date().toLocaleString('sv-SE').slice(0, 16) }, null, 1) + '\n');
-    } else if (!quiet) console.log(`credits: could not read them (${info?.why || 'no budget tool or no key'})`);
+    } else if (!quiet) console.log(/no .*key/i.test(info?.why || '') || !elevenKeyReady() ? 'credits: none to read (no ElevenLabs key: the free built-in voice needs no credits)' : `credits: could not read them (${info?.why || 'no budget tool'})`);
   }
   const { load } = await import('../dashboard/model.mjs');
   const { html } = await import('../dashboard/page.mjs');
@@ -523,7 +641,11 @@ function doctor() {
   ok(sh('ffprobe', ['-version']).status === 0, 'ffprobe');
   ok(fs.existsSync(path.join(REEL_ENGINE, 'tools', 'voice.py')), `Reel Kit engine at ${REEL_ENGINE}`, 'run bash setup/install.sh in the Reel Kit');
   ok(fs.existsSync(path.join(REEL_ENGINE, 'node_modules', 'playwright')) || fs.existsSync(path.join(scenes.SKILL, 'node_modules', 'playwright')), 'Playwright', 'npm install inside the Reel Kit engine');
-  ok(fs.existsSync(path.join(os.homedir(), '.config', 'bagelunit-reels', 'elevenlabs.key')), 'ElevenLabs key file (needed for a real voice; stand-in works without)', 'Reel Kit SETUP.md section 3');
+  {
+    const sup = engineSupport(), kit = elevenKeyReady();
+    const [eng] = sup.builtIn ? findBuiltInEngine({}) : [null];
+    console.log(`${kit || eng ? 'ok     ' : 'MISSING'} voice: ${kit ? 'an ElevenLabs key is saved (natural voice)' : eng ? `no ElevenLabs key, so the free built-in voice (${eng}, basic quality) speaks; ${UPGRADE}` : sup.installed && !sup.builtIn ? 'no ElevenLabs key, and the installed Reel Kit is older than the free built-in voice  -> update the Reel Kit (/kit-update)' : 'no ElevenLabs key and no built-in speech engine found  -> video suggest elevenlabs, or install espeak-ng (Linux)'}`);
+  }
   const reg = scenes.registry();
   ok(Boolean(reg && reg.format === 'wide'), `styles synced for wide: ${reg ? `${scenes.sceneStyleIds().length} (styles repo ${reg.version}, ${reg.synced})` : 'none'}`, 'node sync-to-kit.mjs --kit <this kit> --format wide --apply in bagelunit-styles');
   ok(fs.existsSync(path.join(os.homedir(), '.config', 'bagelunit-video')), 'YouTube folder ~/.config/bagelunit-video (only for upload)');
@@ -532,6 +654,22 @@ function doctor() {
   console.log(`${bl.ok ? 'ok     ' : 'note   '} ${bl.text}`);
   // outside tools are suggestions, never requirements (video suggest)
   for (const l of suggest.doctorLines(suggest.findBrandDir(process.cwd()))) console.log(`note    ${l}`);
+}
+
+/* ── python tools ───────────────────────────────────────────────────────────────────────────────────────────────────── */
+// mixcheck.py, thumbcheck.py and abtest.py are Python 3 scripts; find the interpreter the way the tests do (python3, python, py -3)
+export function findPython() {
+  for (const [c, pre] of [['python3', []], ['python', []], ['py', ['-3']]]) {
+    const r = spawnSync(c, [...pre, '-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8' });
+    if (r.status === 0 && r.stdout.trim() === '3') return [c, pre];
+  }
+  return null;
+}
+function pyTool(script, args) {
+  const py = findPython();
+  if (!py) { console.error(`Python 3 is needed for ${script} (python3, python or py -3 was not found). Install it from python.org, then run this again.`); process.exitCode = 2; return; }
+  const r = spawnSync(py[0], [...py[1], path.join(TOOLS, script), ...args], { stdio: 'inherit' });
+  process.exitCode = r.status ?? 2;
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -565,6 +703,13 @@ async function main() {
     });
     case 'chapters': return run(() => chapters(openVideo(arg)));
     case 'captions': return run(() => captionsCmd(openVideo(arg)));
+    case 'script': return run(() => { const v = openVideo(arg); process.exitCode = scriptgate.command(v.dir, flags); });
+    case 'pace': return run(async () => { const P = await import('./pacecheck.mjs'); P.cli([openVideo(arg).dir], flags); });
+    case 'musicplan': return run(async () => { const M = await import('./musicplan.mjs'); M.cli([openVideo(arg).dir], flags); });
+    case 'captionscheck': return run(async () => { const C = await import('./captionscheck.mjs'); await C.cli([arg ? path.resolve(arg) : die('give the video folder (or a .srt file)')], flags); });
+    case 'mixcheck': return run(() => pyTool('mixcheck.py', process.argv.slice(3)));
+    case 'thumbcheck': return run(() => pyTool('thumbcheck.py', process.argv.slice(3)));
+    case 'abtest': return run(() => pyTool('abtest.py', process.argv.slice(3)));
     case 'facts': return run(() => factsCmd(loose, flags));
     case 'approve': return run(() => {
       const v = openVideo(arg), which = loose[2];
@@ -634,7 +779,7 @@ async function main() {
       if (cmd) process.exitCode = 1;
   }
 }
-const CHANGES = new Set(['new', 'voice', 'revoice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'sources', 'archive', 'youtube']);
+const CHANGES = new Set(['new', 'script', 'voice', 'revoice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'sources', 'archive', 'youtube']);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const { loose, flags: cliFlags } = parse(process.argv.slice(2));
   Promise.resolve(main()).then(() => {

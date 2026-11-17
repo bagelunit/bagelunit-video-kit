@@ -14,6 +14,7 @@ import { chunkScript, chapterLines, stamp } from '../studio/tools/video.mjs';
 import * as yt from '../studio/tools/youtube.mjs';
 import * as scenes from '../studio/tools/scenes.mjs';
 import * as checks from '../studio/tools/checks.mjs';
+import * as gate from '../studio/tools/scriptgate.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let n = 0;
@@ -211,6 +212,7 @@ subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lav
   fs.writeFileSync(path.join(dir, 'script.txt'), Array.from({ length: 12 }, (_, i) => `Paragraph ${i} has some words in it, nothing more.`).join('\n\n'));
   fs.writeFileSync(path.join(dir, 'outline.md'), '# Map\n');
   checks.approve(dir, 'map'); checks.recordFacts(dir, { scope: 'script', result: 'PASS', cfg: { no_research: 'a test script' } });
+  gate.recordScriptSkip(dir, 'fixture script, voice mechanics under test');
   const r = spawnSync(process.execPath, [path.join(REPO, 'studio', 'tools', 'video.mjs'), 'voice', dir], { encoding: 'utf8', env: { ...process.env, BAGELUNIT_REEL_ENGINE: eng, VIDEO_CHUNK: '120' } });
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.ok(fs.existsSync(path.join(dir, 'audio', 'vo.mp3')));
@@ -289,6 +291,8 @@ await test('the voice waits for the map approval and the fact check', () => {
   fs.writeFileSync(path.join(v, 'outline.md'), '# Map\n'); checks.approve(v, 'map');
   assert.match(run().stderr, /no fact check recorded/);
   checks.recordFacts(v, { scope: 'script', result: 'PASS', cfg: { no_research: 'test' } });
+  assert.match(run().stderr, /no "Script review" line/);
+  gate.recordScriptSkip(v, 'fixture script, voice mechanics under test');
   assert.match(run().stderr, /Reel Kit engine is not installed/);
   fs.appendFileSync(path.join(v, 'outline.md'), 'A new chapter\n');
   assert.match(run().stderr, /changed after it was approved/);
@@ -885,6 +889,7 @@ subprocess.run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lav
   fs.writeFileSync(path.join(dir, 'script.txt'), script);
   fs.writeFileSync(path.join(dir, 'outline.md'), '# Map\n');
   checks.approve(dir, 'map'); checks.recordFacts(dir, { scope: 'script', result: 'PASS', cfg: { no_research: 'a test script' } });
+  gate.recordScriptSkip(dir, 'fixture script, voice mechanics under test');
   const words = scenes.fakeWords(script, 0.38);
   scenes.writeWords(dir, words);
   fs.mkdirSync(path.join(dir, 'audio'), { recursive: true });

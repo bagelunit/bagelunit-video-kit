@@ -9,7 +9,7 @@
         {
           "id": "elevenlabs",
           "name": "ElevenLabs",
-          "what_you_get": "A natural human-sounding narration voice instead of the free stand-in tone.",
+          "what_you_get": "A natural human-sounding narration voice instead of the free built-in voice (basic quality, this computer's own speech engine).",
           "example": "A natural voice for a 15 minute episode: the kit voices the script in chunks, pays for each chunk once, and checks your character allowance first.",
           "connect": [
             "Make an ElevenLabs account at elevenlabs.io (check the site for what the plans include).",

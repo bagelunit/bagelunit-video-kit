@@ -2,6 +2,35 @@
 
 ## 1.1.0
 
+**The voice needs no outside tool** (with the Reel Kit 1.3.0 or newer)
+- The voice step now works with no ElevenLabs key: the free built-in voice (this computer's own speech engine; basic quality) speaks, and `video voice` says which voice it will use before it starts. With a key saved, ElevenLabs speaks as before. `--provider local|elevenlabs|command` chooses for one run, and brand.json `voice.provider` can be `command` (your own text-to-speech command). An older Reel Kit keeps the old behaviour and says to update it.
+- The credit check only applies to ElevenLabs: for the built-in voice and your own command it prints "credits check: not needed" and never blocks on characters.
+- Who spoke is recorded: `build/voice_source.json` (provider, engine, word timings, tied to the audio) and a line under "Voice" in `approvals.md`; QA, the dashboard and the upload read it, and the built-in voice counts as a real voice while the stand-in tone still does not. When the word times are only estimated (Whisper is not installed), `video voice`, `video captions` and `video qa` warn that captions and cuts may drift and say how to fix it.
+- `video doctor` has a "voice" line: which voice will speak, or what fixes it. Tests: `setup/test-voice.mjs`.
+
+**The script flow** (a script that reads like a person wrote it, before any voice is made)
+- `video script <video>`: a script check with no model and no credits (length against the plan, the opening 30 seconds, chapter hooks, the ending, long sentences, fragments, numbers and names, lists, jargon, filler, repeated openings, links, every line being speakable) writing `build/scriptcheck.md`. `--human` prints the human score (how unlike stock AI prose it reads; bar 90, set higher with brand.json `writing.human_score_min`, extra banned phrases in `writing.banned_phrases`). `brand/jargon.md` lists words the voice must explain the first time it says them.
+- Three channel skills: `/script-plan` (one viewer, one promise, chapters with hooks and minutes, the opening written and scored; writes `script-brief.md`), `/script-coldread` (a fresh agent that sees only the spoken words; `build/coldread.md`) and `/script-score` (a score out of 100 in a fresh context, 90 or more to pass).
+- The gate before the voice: `video voice` and `video revoice` refuse until the script has a recorded `Script review: meets the bar (NN/100; ...) [script <fingerprint>]` line in `approvals.md` for the exact words (`video script --record --score NN`, refused under 90 or while the script check has errors). Change one word and it no longer fits. The order is: research, map approved, fact check PASS, script review, then credits and voice. Only the owner can skip the review, with a reason (`--skip-script-review "reason"`), and that is written down; the fact check can never be skipped. `video script --status` and `--hash` show the gate and the fingerprint.
+- The channel folder gets `brand/jargon.md` and a `writing` setting in `brand/brand.json`; `video update` adds both to an older channel folder and keeps your own jargon list. Tests: `setup/test-script.mjs`, and the gate in `setup/test-voice.mjs`.
+
+**Quality tools** (each one is a command, none needs a key)
+- `video pace`: does the picture keep changing (scene lengths, no change for too long, the same template in a row, variety in every chapter, seconds per scene; a calm style such as `deep-zoom` has its own band); `build/pace.json`.
+- `video musicplan`: does the music follow the chapters (the music plan table in `outline.md`, from the starter `brand/music-plan.md`, against the chapters, video.json `"music"` and the licensed register).
+- `video captionscheck`: can the captions be read in time (17 characters a second, 42 a line, two lines at most, no flashes), for the uploaded file or, with `--words`, the captions the kit would make.
+- `video mixcheck` (Python 3, ffmpeg): loudness, loudness range, clipping, long silences, the music dipping under the voice and each chapter's level; `build/mix.json`.
+- `video thumbcheck` (Python 3, ffmpeg): file, size, safe margin and the duration-badge corner, text tall enough, light, and readable at 168x94; text is read with Apple Vision or Tesseract, else estimated (a warning, never a failure).
+- `video abtest` (Python 3): whether a thumbnail or title is really ahead on YouTube Studio's own counts (a fixed rule: 95 percent against each other variant and enough impressions each, else how many more to wait for). The same counts always give the same answer.
+- A missing Python 3 says so plainly (exit 2) for the three Python tools. Tests: `setup/test-quality.mjs`.
+
+**Generated shots** (an AI-generated clip or still from any provider; none is required)
+- Two new register types, `generated-video` and `generated-image`, recorded with `video licensed add --tool "<tool>" [--prompt ...]`. The video must show a label on screen (default "Re-creation" or "AI-generated"; `--onscreen-label` changes it, `--no-label "reason"` records why none is needed): the final approval refuses without it, with no override, and says plainly when it could not look. The credits and approval lines name the tool.
+- Generated assets are YouTube only unless recorded with `--vertical-ok`; the vertical render now refuses only licensed or generated material that was not recorded that way.
+- Template folders `brand/licensed/generated-video/` and `generated-image/` (media kept out of git), the README rules, and two channel skills: `/generated-shots` (make or record a shot, use it by id with its label) and `/thumbnail-design` (a thumbnail from Canva, Adobe or any editor, or a Blender still, checked with `video thumbcheck`, with YouTube's three-thumbnail test and the A/B rule). Tests: `setup/test-generated.mjs`.
+
+**Retention in the channel review**
+- `video review` also reads a video's audience retention export (put the video's folder name or YouTube id in the file name) and adds a "Retention (where viewers leave)" section: the first 30 seconds, average view duration against length, the steepest falls and the scene and chapter each sits in, hypotheses (labelled not proven) and one to three tests. No export means nothing is said about where viewers leave. Tests: `setup/test-retention.mjs`.
+
 **Optional tools: suggested, never required** (the kit works on pure code rendering)
 - `video suggest`: a catalog (`studio/suggestions.json`) of optional outside tools by category: voice (ElevenLabs, another voice service), music and effects (Uppbeat, Epidemic Sound), 3D (Blender with the Blender Lab MCP), generated video (Higgsfield, another tool) and design (Canva, Adobe Firefly or Express, the Adobe connector for Claude). Each has what it adds, a concrete example, the connect steps and its site (no prices). `video suggest <id>` shows one in detail, `--json` is for scripts.
 - Status is found from existence checks only: a program on PATH or at a known path, a key file that exists (never read or printed), a connector named in `claude mcp list` (skipped when `claude` is missing), a licensed-register entry, and your own answer. No network, no telemetry.

@@ -36,3 +36,17 @@ jobs:
       - name: Blender support tests (own clips, library, terrain with a stubbed fetch; the real Blender part skips without Blender)
         shell: bash
         run: node setup/test-blender.mjs
+      - name: Voice tests (the built-in voice, who spoke, estimated timings)
+        shell: bash
+        run: node setup/test-voice.mjs
+      - name: Script flow tests (script check, human score, the gate before the voice)
+        run: node setup/test-script.mjs
+      - name: Quality tool tests (pace, captions, music plan, mix, thumbnail, A/B; numpy only improves the thumbnail text estimate, the Python parts skip without it)
+        shell: bash
+        run: |
+          python3 -m pip install --quiet numpy || python -m pip install --quiet numpy || echo "numpy not installed: the tests that need it skip"
+          node setup/test-quality.mjs
+      - name: Generated shots tests (register types, label gate, the vertical render)
+        run: node setup/test-generated.mjs
+      - name: Retention tests (the channel review's retention section)
+        run: node setup/test-retention.mjs

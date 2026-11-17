@@ -386,7 +386,7 @@ else {
     const root = channel(), vid = useInVideo(root, 'vert', { style: styleId, look: { lut: 'x' }, music: [{ asset: 'y' }] }, { scenes: [{ clip: { asset: 'stock' }, narration: 'One two three.' }] });
     const script = (extra) => `const s = await import(${JSON.stringify(pathToFileURL(path.join(REPO, 'studio', 'tools', 'scenes.mjs')).href)}); s.setShape('vertical'); try { await s.renderScenes({ dir: ${JSON.stringify(vid.replace(/\\/g, '/'))}, cfg: JSON.parse(${JSON.stringify(JSON.stringify({ style: styleId }))}) }, {}); console.log('RENDERED'); } catch (e) { console.log('ERROR ' + e.message); }`;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', script()], { encoding: 'utf8' });
-    assert.match(r.stdout, /ERROR scene 1 uses licensed material .* YouTube only.*"clip": null/);
+    assert.match(r.stdout, /ERROR scene 1 uses licensed or generated material .* YouTube only.*"clip": null/);
     const planned = (scene) => { fs.writeFileSync(path.join(vid, 'scenes.json'), JSON.stringify({ scenes: [scene] })); return scenes.planOf(vid, styleId).scenes[0]; };
     assert.ok(planned({ clip: { asset: 'stock' }, narration: 'x' }).clip, 'wide keeps the clip');
     planned({ clip: { asset: 'stock' }, overlay: { asset: 'leak' }, vertical: { clip: null, overlay: null, template: tpl, props: {} }, narration: 'x' });

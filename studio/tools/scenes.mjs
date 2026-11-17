@@ -696,8 +696,8 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   const root = licensed.channelRoot(reel.dir);
   // licensed material is for YouTube only: the vertical (Instagram) version carries none of it
   if (vertical) {
-    const s = prep.scenes.find((x) => x.clip?.asset != null || x.overlays?.some((o) => o.asset != null));
-    if (s) throw new Error(`scene ${s.n} uses licensed material (stock video or an overlay), which is for YouTube only (your own files, "file", are fine in the vertical version). For the vertical version give that scene a "vertical" override without it, for example {"vertical": {"clip": null, "template": "<id>", "props": {...}, "narration": "..."}} (use "overlay": null to drop an overlay), or remove it`);
+    const s = prep.scenes.find((x) => (x.clip?.asset != null && !licensed.verticalOk(root, x.clip.asset)) || x.overlays?.some((o) => o.asset != null && !licensed.verticalOk(root, o.asset)));
+    if (s) throw new Error(`scene ${s.n} uses licensed or generated material (stock video, a generated shot or an overlay), which is for YouTube only (your own files, "file", are fine in the vertical version, and so is a generated asset recorded with --vertical-ok). For the vertical version give that scene a "vertical" override without it, for example {"vertical": {"clip": null, "template": "<id>", "props": {...}, "narration": "..."}} (use "overlay": null to drop an overlay), or remove it`);
     if (reel.cfg.look || Array.isArray(reel.cfg.music)) console.log('note: licensed look and music are YouTube only: left out of the vertical version');
   }
   for (const n of prep.notes) console.log(`note: ${n}`);

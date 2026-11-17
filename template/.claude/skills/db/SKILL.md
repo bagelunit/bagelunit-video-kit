@@ -16,7 +16,7 @@ metadata:
 Run from this channel folder. It reads and shows only: it uploads, approves and spends nothing.
 
 1. **No argument:** run `node ~/.claude/skills/bagelunit-video/tools/video.mjs dashboard --open`. It redraws `videos/video-dashboard.html` from this folder's files (no network, no AI, free) and opens it in the default browser.
-2. **`credits`:** run `node ~/.claude/skills/bagelunit-video/tools/video.mjs dashboard --credits --open`, which also reads the ElevenLabs characters left.
+2. **`credits`:** run `node ~/.claude/skills/bagelunit-video/tools/video.mjs dashboard --credits --open`, which also reads the ElevenLabs characters left (with no key there is nothing to read: the free built-in voice has no credits).
 
 If `brand/brand.json` has no name yet, the channel is not set up: say so in one line and point to `/channel-setup`. If the engine is missing, say `bash setup/install.sh` in the kit's folder fixes it. If the page does not open (a remote or headless computer), print the full path of `videos/video-dashboard.html` and say it can be opened from there.
 

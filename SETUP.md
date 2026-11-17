@@ -11,16 +11,16 @@ Below, `video <command>` is short for `node ~/.claude/skills/bagelunit-video/too
 | A Mac, Windows or Linux computer with [Claude Code](https://claude.com/claude-code) | Claude runs every step | your Claude plan |
 | [Node.js](https://nodejs.org) 22 or newer, and ffmpeg | the commands and the video files | free |
 | The [BagelUnit Reel Kit](https://github.com/bagelunit/bagelunit-reel-kit), installed | the voice tool, the headless browser that draws the scenes, the fonts and the sound effects | free |
-| An [ElevenLabs](https://elevenlabs.io) account with a key (our suggested voice service; other providers can be connected) | the voice | about 900 characters per minute of video (section 8) |
+| An [ElevenLabs](https://elevenlabs.io) account with a key (optional: our suggested voice service for a natural voice; other providers can be connected) | the voice. With no key the free built-in voice speaks (needs the Reel Kit 1.3.0 or newer) | about 900 characters per minute of video (section 8); the built-in voice costs nothing |
 | [Blender](https://www.blender.org) 4.2 or newer (optional) | 3D shots and terrain maps (`/blender-shot`); never needed for the rest | free |
 | A YouTube channel and its Google account (optional) | uploading from this computer | free |
 | Chrome (or Edge, Brave, Arc, Vivaldi, Opera) with Claude in Chrome (optional) | Claude does the web steps in your browser | free |
 
 ## 2. Install
 
-1. **The Reel Kit first.** Follow its README: `bash setup/install.sh` in its folder. Its setup walks you through the ElevenLabs key (you paste it into a file Claude opens; nobody else sees it).
+1. **The Reel Kit first.** Follow its README: `bash setup/install.sh` in its folder. Its setup can walk you through an ElevenLabs key (optional: you paste it into a file Claude opens; nobody else sees it). With no key the free built-in voice speaks.
 2. **This kit.** Download it (Code, Download ZIP, or `git clone https://github.com/bagelunit/bagelunit-video-kit`), open a terminal in its folder and run `bash setup/install.sh` (Windows: `node setup/install.mjs`). It checks ffmpeg and the Reel Kit and installs the skill `bagelunit-video`.
-3. **Check.** `video doctor` lists what is installed and what is missing, with the command that fixes each.
+3. **Check.** `video doctor` lists what is installed and what is missing, with the command that fixes each. Its "voice" line says which voice will speak: ElevenLabs (a key is saved), the free built-in voice (basic quality; this computer's own speech engine, which needs the Reel Kit 1.3.0 or newer) or none yet (then it says what fixes it).
 4. **Optional tools.** Blender (free 3D) is looked for but never installed for you: `bash setup/install.sh` prints its version, or a NOTE with how to get it (`brew install --cask blender` on a Mac, `winget install BlenderFoundation.Blender` on Windows, `sudo snap install blender --classic` or blender.org on Linux). `video doctor` says whether it is found. If it is installed somewhere unusual, set `BAGELUNIT_BLENDER` to its program. Only the 3D shots in a channel's `brand/library/3d/` need it.
 
 ## 3. Make a channel folder
@@ -42,11 +42,11 @@ Open Claude Code **in the channel folder** and type **`/bagelunit-video`** with 
 1. **Style.** Claude picks one of the 20 styles that fits the topic (your channel's usual ones first) and says why. `video styles` lists them.
 2. **Research.** It reads real sources and writes `research.md`: every fact with its link, and what is uncertain or disputed.
 3. **Report and map, then it stops.** You get the facts the video rests on, the style, the map from hook to payoff with the estimated length, three title options and thumbnail ideas, what the voice will cost, and parts to split it into if it runs long. **Say go, or what to change.** Nothing costs credits before this.
-4. **Script and scenes.** The first 30 seconds follow the triple hook (context, a reason to lean in, then a turn they did not expect), each chapter opens with a small hook, and it ends on the payoff and your call to action.
+4. **Script and scenes.** The first 30 seconds follow the triple hook (context, a reason to lean in, then a turn they did not expect), each chapter opens with a small hook, and it ends on the payoff and your call to action. The script is checked (`video script`), read cold by a fresh agent (`/script-coldread`) and scored out of 100 (`/script-score`); it needs 90 or more before it can be voiced.
 5. **Fact check.** Every number said or shown is checked against the research ("sixty four percent" matches "64%"), and Claude re-reads the sources before recording a pass.
-6. **Voice.** It checks your ElevenLabs characters first and stops if there are not enough. A long script is voiced in pieces; a piece already paid for is never paid for again.
+6. **Voice.** It says which voice will speak. With an ElevenLabs key it checks your characters first and stops if there are not enough; with no key the free built-in voice speaks and needs no credits. A long script is voiced in pieces; a piece already paid for is never paid for again. If Whisper is not installed the word times are estimated and it warns that captions may drift. The voice refuses a script with no recorded review (only the owner can skip that, with a reason).
 7. **Render.** Scene by scene, at 1920x1080, with sound effects on chapter changes and your music if you added one. Rendering takes about as long as the video.
-8. **Checks.** A quality check of the file (size, length, loudness, black or frozen stretches) and a last fact check with the YouTube text.
+8. **Checks.** A quality check of the file (size, length, loudness, black or frozen stretches), the pace of the picture (`video pace`), the music plan (`video musicplan`), the captions (`video captionscheck`), the mix (`video mixcheck`), the thumbnail (`video thumbcheck`) and a last fact check with the YouTube text. The last three need Python 3.
 9. **Your yes.** Claude shows you the video, the thumbnail, the title and description, and a comment to pin. **Watch the whole video, start to end, then say yes** (or what to change). The upload waits until you have said you watched all of it.
 10. **Upload.** A dry run first, then the upload, **private** unless you say otherwise, with captions made from the voice. Going public is always your call, made in YouTube Studio or by telling Claude. Afterwards, post the pinned comment yourself (the kit never posts comments): paste it under the video as the channel, then Pin.
 
@@ -132,7 +132,7 @@ With Blender installed, `/blender-shot` in a channel folder makes a product, pho
 
 ## 6e. Optional tools that improve results (all suggested, none required)
 
-The kit renders every video in code, with no outside tool. Some tools make a result better: a natural voice (ElevenLabs), licensed music (Uppbeat, Epidemic Sound), 3D (Blender with the Blender Lab MCP), generated shots (Higgsfield or another tool), and thumbnails and graphics (Canva, Adobe Firefly or Express, the Adobe connector). `/channel-setup` asks once near the end whether to show them; `/suggested-tools` (or `video suggest`) any time. It lists each tool with what it adds and a concrete example, asks with selectable questions which ones you have (or none, or something else you type), records your answers in `brand/brand.json`, and walks through connecting the ones you have. Detection looks only at what is on this computer (a program, a key file that exists, a connector Claude already has); nothing is sent anywhere and a key is never read. At the matching step (`video new`, `video thumbnail`, `video render`, `video voice`) one short `Tip:` line may appear when a tool would help; `video suggest --dismiss <id>`, `--no-tips`, `BAGELUNIT_NO_TIPS=1` or `"tools": {"tips": false}` silences it.
+The kit renders every video in code, with no outside tool. Some tools make a result better: a natural voice (ElevenLabs), licensed music (Uppbeat, Epidemic Sound), 3D (Blender with the Blender Lab MCP), generated shots (Higgsfield or another tool; `/generated-shots` records them with their label), and thumbnails and graphics (Canva, Adobe Firefly or Express, the Adobe connector). `/channel-setup` asks once near the end whether to show them; `/suggested-tools` (or `video suggest`) any time. It lists each tool with what it adds and a concrete example, asks with selectable questions which ones you have (or none, or something else you type), records your answers in `brand/brand.json`, and walks through connecting the ones you have. Detection looks only at what is on this computer (a program, a key file that exists, a connector Claude already has); nothing is sent anywhere and a key is never read. At the matching step (`video new`, `video thumbnail`, `video render`, `video voice`) one short `Tip:` line may appear when a tool would help; `video suggest --dismiss <id>`, `--no-tips`, `BAGELUNIT_NO_TIPS=1` or `"tools": {"tips": false}` silences it.
 
 ## 7. Reels from a video (with the Reel Kit)
 
@@ -158,8 +158,10 @@ In a channel folder, type `/video-update` (or run `video update`). It is a dry r
 | It says | What to do |
 |---|---|
 | `not voicing yet: the map has not been approved` | Read the report and the map and say go; Claude records it with `video approve <video> map`. |
+| `not voicing yet: ... Script review` | The script has no recorded review for its exact words. Run `/script-coldread` then `/script-score` (it records the line, `video script <video> --record --score NN`), or, only if you are the owner, `video voice <video> --skip-script-review "why"`. |
 | `not voicing yet: ... fact check` | `video facts <video>` lists each number without a source: add the source to `research.md` or change the words. |
-| `not enough ElevenLabs characters` | Top up, wait for the monthly reset, shorten the script or split the video into parts. |
+| `not enough ElevenLabs characters` | Top up, wait for the monthly reset, shorten the script or split the video into parts, or remove the key to use the free built-in voice. |
+| `Python 3 is needed for ...` | `video mixcheck`, `video thumbcheck` and `video abtest` are Python 3 scripts: install Python 3 (python.org) and run again. |
 | `QA: FAIL` | `video qa <video>` names the check that failed (for example a still stretch or the stand-in voice); fix it and render again. |
 | `not sent: the final video has not been approved` | Watch the video and say yes; Claude records it with `video approve <video> final --watched`. |
 | `not sent: ... does not say the person watched the whole final cut` | Watch all of it, start to end, and say so; Claude records it with `video approve <video> final --watched`. |

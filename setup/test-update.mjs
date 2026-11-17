@@ -223,6 +223,18 @@ await test('the real template: a channel made by new-workspace records its build
   assert.match(fs.readFileSync(path.join(REPO, 'setup', 'install.mjs'), 'utf8'), /\.install\.json/);
 });
 
+await test('an older channel folder gets brand/jargon.md and the brand.json "writing" settings added, and its own jargon list is kept', () => {
+  const home = tmp(), r = makeWorkspace(path.join(home, 'old-videos'), { registry: path.join(home, 'channels.json') });
+  const bf = path.join(r.dir, 'brand', 'brand.json'), b = JSON.parse(fs.readFileSync(bf, 'utf8')); delete b.writing; fs.writeFileSync(bf, JSON.stringify(b));
+  fs.rmSync(path.join(r.dir, 'brand', 'jargon.md'));
+  const plan = U.planTemplate(REPO, r.dir);
+  assert.ok(plan.add.includes('brand/jargon.md'), JSON.stringify(plan));
+  assert.ok(plan.settings.includes('writing'), JSON.stringify(plan.settings));
+  fs.writeFileSync(path.join(r.dir, 'brand', 'jargon.md'), '# mine\n\n## Terms\nphotolysis | breaking apart with light\n');
+  const again = U.planTemplate(REPO, r.dir);
+  assert.ok(!again.add.includes('brand/jargon.md') && again.kept.includes('brand/jargon.md'), JSON.stringify(again));
+});
+
 await test('the command line: video update is a dry run by default and explains a missing kit folder', () => {
   const home = tmp(), env = { ...process.env, HOME: home, USERPROFILE: home, BAGELUNIT_VIDEO_ENGINE: path.join(home, 'none') };
   let r = spawnSync(process.execPath, [VIDEO, 'update'], { cwd: home, encoding: 'utf8', env });

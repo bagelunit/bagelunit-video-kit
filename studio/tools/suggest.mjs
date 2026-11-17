@@ -200,7 +200,7 @@ export function doctorLines(dir) {
     const left = c.tools.filter((t) => st[t.id].status !== 'connected' && !t.id.startsWith('other-')).map((t) => t.name.replace(/ \(.*\)$/, ''));
     return left.length && !c.tools.some((t) => st[t.id].status === 'connected') ? `${label[c.id] || c.title} (${left.join(', ')})` : null;
   }).filter(Boolean);
-  const out = [`Works without any outside tool: every style, scenes, stand-in voice, thumbnails, captions and QA are drawn in code${have.length ? `; connected: ${have.join(', ')}` : ''}.`];
+  const out = [`Works without any outside tool: every style, scenes, the free built-in voice, thumbnails, captions and QA are drawn in code${have.length ? `; connected: ${have.join(', ')}` : ''}.`];
   if (adds.length) out.push(`Optional upgrades you could add: ${adds.join('; ')}. Details: video suggest`);
   return out;
 }

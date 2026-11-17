@@ -138,9 +138,9 @@ try { await s.renderScenes({ dir, cfg: { style: ${JSON.stringify(styleId)} } }, 
   fs.mkdirSync(path.join(vid, 'assets', 'blender'), { recursive: true }); fs.writeFileSync(path.join(vid, 'assets', 'blender', 'a.mp4'), 'x');
   fs.mkdirSync(path.join(vid, 'audio'), { recursive: true });
   const own = run({ scenes: [{ clip: { file: 'assets/blender/a.mp4' }, overlay: { file: 'assets/blender/a.mp4' }, narration: 'One two three.' }] });
-  assert.ok(!/uses licensed material/.test(own.stdout), `own files are not refused in the vertical version: ${own.stdout}${own.stderr}`);
+  assert.ok(!/uses licensed or generated material/.test(own.stdout), `own files are not refused in the vertical version: ${own.stdout}${own.stderr}`);
   const lic = run({ scenes: [{ clip: { asset: 'stock' }, narration: 'One two three.' }] });
-  assert.match(lic.stdout, /ERROR scene 1 uses licensed material .*YouTube only \(your own files, "file", are fine in the vertical version\)/);
+  assert.match(lic.stdout, /ERROR scene 1 uses licensed or generated material .*YouTube only \(your own files, "file", are fine in the vertical version/);
 });
 
 /* ── own clips and overlays: real ffmpeg pixels and a render ───────────────────────────────────────────────────────── */

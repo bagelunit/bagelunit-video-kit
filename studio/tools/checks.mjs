@@ -242,6 +242,45 @@ function logApproval(dir, heading, line) {
   text = next < 0 ? `${text.trimEnd()}\n${entry}` : `${text.slice(0, next).trimEnd()}\n${entry}${text.slice(next)}`;
   fs.writeFileSync(f, text);
 }
+
+/* ── who spoke (build/voice_source.json) ────────────────────────────────────────────────────────────────────────────── */
+// The Reel Kit's voice tool writes build/voice_source.json in every chunk folder (provider, engine, voice, timings:
+// provider|whisper|estimated). video voice joins them into one record for the whole voice, tied to audio/vo.mp3's SHA-256 so a
+// voice that was replaced afterwards is not described by it, and adds a line under "## Voice" in approvals.md (only when it
+// changed; earlier lines are never rewritten). A built-in voice is a real voice; only the stand-in tone is refused.
+export const WHISPER_ADVICE = 'Install Whisper for exact word times: brew install whisper-cpp (and put a ggml model in ~/.config/bagelunit-reels/ggml-base.bin), or pip3 install faster-whisper,';
+export function voiceLabel(src) {
+  if (!src) return 'a voice';
+  const eng = [src.engine, src.voice && src.voice !== 'default' ? src.voice : ''].filter(Boolean).join(', ');
+  return ({ local: `the built-in voice (${eng || 'this computer'}; basic quality)`, command: `your own voice command${src.engine ? ` (${src.engine})` : ''}`, elevenlabs: 'ElevenLabs', openai: 'OpenAI speech', file: 'your own recording' })[src.provider] || String(src.provider || 'a voice');
+}
+export function recordVoice(dir, parts, { provider = 'elevenlabs' } = {}) {
+  const infos = parts.map((d) => readJSON(path.join(d, 'build', 'voice_source.json'), null)).filter(Boolean);
+  const providers = [...new Set(infos.map((i) => i.provider))];
+  const timings = infos.some((i) => i.timings === 'estimated') ? 'estimated' : infos.length && infos.every((i) => i.timings === 'whisper') ? 'whisper' : infos[0]?.timings || 'provider';
+  const first = infos[0] || {};
+  const src = { provider: providers.length > 1 ? 'mixed' : providers[0] || provider, ...(first.engine ? { engine: first.engine } : {}), ...(first.voice ? { voice: first.voice } : {}), timings, chunks: parts.length, at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), vo_sha256: sha256File(path.join(dir, 'audio', 'vo.mp3')) };
+  fs.mkdirSync(path.join(dir, 'build'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'build', 'voice_source.json'), JSON.stringify(src, null, 1) + '\n');
+  logVoice(dir, `${voiceLabel(src)}, word times ${timings}, ${parts.length} chunk${parts.length === 1 ? '' : 's'}, audio/vo.mp3 ${String(src.vo_sha256).slice(0, 12)}`);
+  return src;
+}
+// one line under "## Voice", unless the last line there says the same
+export function logVoice(dir, line) {
+  const f = path.join(dir, 'approvals.md'), text = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
+  const at = text.indexOf('\n## Voice\n');
+  if (at >= 0) {
+    const next = text.indexOf('\n## ', at + 4), block = text.slice(at, next < 0 ? undefined : next).trimEnd().split('\n');
+    if (block.at(-1)?.replace(/^- \S+ \S+\s+/, '') === line) return;
+  }
+  logApproval(dir, 'Voice', line);
+}
+// the record of who spoke audio/vo.mp3 as it is now, or null (none, or the voice was replaced after it was written)
+export function voiceSource(dir) {
+  const rec = readJSON(path.join(dir, 'build', 'voice_source.json'), null);
+  if (!rec || !rec.vo_sha256 || rec.vo_sha256 !== sha256File(path.join(dir, 'audio', 'vo.mp3'))) return null;
+  return rec;
+}
 const mapFiles = (dir) => ['outline.md', 'research.md'].map((x) => path.join(dir, x));
 // out/pinned-comment.txt (the comment the person pins by hand after the upload) is approved with the rest, when there is one
 const finalFiles = (dir) => ['video.mp4', 'thumbnail.jpg', 'youtube.txt', 'pinned-comment.txt'].map((x) => path.join(dir, 'out', x));
@@ -313,7 +352,10 @@ export function qa(dir, { standIn = false, cfg = null } = {}) {
   const allow = endAllowance(cfg, readJSON(path.join(dir, 'build', 'words.json'), []), voLen);
   if (voLen) add('length', dur >= voLen - 0.1 && dur - voLen <= 2 + allow.extra ? 'PASS' : 'FAIL', `video ${dur.toFixed(2)} s, voice ${voLen.toFixed(2)} s${allow.card ? `, end card ${allow.card.toFixed(2)} s` : ''}${allow.extra > allow.card + 0.01 ? `, tail ${(allow.extra - allow.card).toFixed(2)} s` : ''}`);
   else add('length', 'FAIL', 'audio/vo.mp3 is missing');
-  add('voice', standIn ? 'FAIL' : 'PASS', standIn ? 'the stand-in tone, not a voice' : 'a real voice');
+  const vs = standIn ? null : voiceSource(dir);
+  if (standIn) add('voice', 'FAIL', 'the stand-in tone, not a voice');
+  else if (vs?.timings === 'estimated') add('voice', 'WARN', `a real voice (${voiceLabel(vs)}), but its word times are estimated, so captions and cuts may drift. ${WHISPER_ADVICE} then run video voice again`);
+  else add('voice', 'PASS', vs ? `a real voice (${voiceLabel(vs)})` : 'a real voice');
   const r = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', mp4, '-filter_complex',
     `[0:v]scale=480:-2,blackdetect=d=${QA_BARS.black}:pix_th=0.06,freezedetect=n=0.002:d=${QA_BARS.frozenWarn}[v];[0:a]ebur128=peak=true[a]`,
     '-map', '[v]', '-map', '[a]', '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 1 << 28 });

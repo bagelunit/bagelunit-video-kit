@@ -2,8 +2,11 @@
 // source you have the rights to; Uppbeat is the one we use and suggest). The kit ships only this mechanism, never a file: you
 // download each asset by hand from wherever you license it, and `video licensed add` records it. Nothing here touches the network.
 //
-//   node video.mjs licensed add <file> --type music|sfx|stock-video|motion-graphic|lut --title "..." [--artist ...] [--url ...]
-//                  [--source name] [--plan name] [--channels a,b] [--credit "..."] [--id slug] [--notes ...] [--licence ...] [--move]
+//   node video.mjs licensed add <file> --type music|sfx|stock-video|motion-graphic|lut|generated-video|generated-image --title "..."
+//                  [--artist ...] [--url ...] [--source name] [--plan name] [--channels a,b] [--credit "..."] [--id slug] [--notes ...]
+//                  [--licence ...] [--move]
+//                  the two generated types (a clip or a still made by any generator, none is required) also need --tool "<what made it>"
+//                  and take [--prompt ".."] [--onscreen-label "text"] [--no-label "reason"] [--vertical-ok]; --title may be left out
 //   node video.mjs licensed list [--type T]
 //   node video.mjs licensed check [<video folder>]           PASS/FAIL per asset a video uses; exit 1 on any FAIL
 //   node video.mjs licensed channels <id> a,b                 which channels are safelisted for that asset (replaces the list)
@@ -13,18 +16,32 @@
 // The register is <channel folder>/brand/licensed/assets.json; the files sit next to it in brand/licensed/<type>/.
 // A video refers to assets by id: video.json "look": {"lut": id, "strength": 0..1}, "music": [{"asset": id, "from": scene id or
 // seconds, "fade": s, "gain_db": -18}], and in scenes.json a scene {"clip": {"asset": id, "start": s, "duration": s}} or an
-// "overlay": {"asset": id, "blend": "normal|screen", "opacity": 0..1, "at": s, "duration": s} on any scene.
+// "overlay": {"asset": id, "blend": "normal|screen", "opacity": 0..1, "at": s, "duration": s} on any scene. A clip may use a
+// stock-video or a generated-video asset, an overlay a motion-graphic, a generated-video or a generated-image asset.
+//
+// Generated assets (owner rules 2026-11-17: any generator, always optional, never carrying the story): the record says generated: true,
+// the tool, the prompt and the label text the video must show on screen (default "Re-creation" for video, "AI-generated" for an image;
+// no label only with --no-label "reason", recorded). `video approve final` refuses, with no override, a video whose on-screen text
+// lacks a generated asset's label (see labelCheck). They follow the YouTube-only rule of licensed material unless recorded --vertical-ok.
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export const TYPES = ['music', 'sfx', 'stock-video', 'motion-graphic', 'lut'];
+export const TYPES = ['music', 'sfx', 'stock-video', 'motion-graphic', 'lut', 'generated-image', 'generated-video'];
+export const GENERATED = ['generated-image', 'generated-video'];
+export const DEFAULT_LABEL = { 'generated-video': 'Re-creation', 'generated-image': 'AI-generated' };
+// what a clip or an overlay may be: the type the scene asks for, and the generated types that stand in for it
+export const ACCEPTS = { 'stock-video': ['stock-video', 'generated-video'], 'motion-graphic': ['motion-graphic', 'generated-video', 'generated-image'] };
+export const typeOk = (have, want) => !want || have === want || (ACCEPTS[want] || []).includes(have);
+export const isGenerated = (r) => Boolean(r) && (r.generated === true || GENERATED.includes(r.type));
 export const EXTENSIONS = {
   music: ['.wav', '.mp3', '.flac', '.m4a', '.aiff', '.aif', '.ogg'],
   sfx: ['.wav', '.mp3', '.flac', '.m4a', '.aiff', '.aif', '.ogg'],
   'stock-video': ['.mp4', '.mov', '.m4v', '.mkv', '.webm'],
   'motion-graphic': ['.mov', '.webm', '.mp4', '.mkv', '.gif'],
   lut: ['.cube'],
+  'generated-video': ['.mp4', '.mov', '.m4v', '.webm'],
+  'generated-image': ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
 };
 export const CREDITS_HEADING = 'Music and assets';
 export const REGISTER = 'brand/licensed/assets.json';   // forward slashes on every system: it is shown in messages and docs, and Windows accepts them for files
@@ -180,12 +197,26 @@ export function addAsset(root, source, o = {}) {
   if (!source || !fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error(`file not found: ${source || '(none given)'}. Download it first, from wherever you license it (choose WAV when downloading if the site offers it)`);
   const ext = path.extname(source).toLowerCase();
   if (!EXTENSIONS[type].includes(ext)) throw new Error(`a ${type} should be ${EXTENSIONS[type].join(' ')} (this is "${ext || 'no extension'}")`);
-  const title = String(o.title || '').trim();
+  const gen = GENERATED.includes(type), noLabel = o.noLabel == null || o.noLabel === false ? null : o.noLabel;
+  const title = String(o.title || '').trim() || (gen ? path.basename(source, ext) : '');
   if (!title) throw new Error('--title "..." is needed (the name on the page you got it from), it goes in the credits; record that page with --url, and add --source and --plan too');
   const id = o.id ? String(o.id) : slugOf(title) || slugOf(path.basename(source, ext));
   if (!ID.test(id)) throw new Error(`the id "${id}" must be lowercase letters, digits and dashes (for example clear-skies); give --id`);
   const reg = loadRegister(root);
   if (findAsset(reg, id)) throw new Error(`there is already an asset with the id "${id}": give another --id, or  video licensed remove ${id}  first`);
+  let label = '', noLabelReason = '';
+  if (gen) {
+    if (!String(o.tool || '').trim()) throw new Error(`a ${type} needs --tool "<what made it>" (free text: any generator, so the record is honest)`);
+    if (noLabel !== null && (noLabel === true || !String(noLabel).trim())) throw new Error('--no-label needs the reason it is recorded with: --no-label "why no on-screen label is needed"');
+    if (noLabel !== null) {
+      if (o.onscreenLabel != null && String(o.onscreenLabel).trim()) throw new Error('give either --onscreen-label "text" or --no-label "reason", not both');
+      noLabelReason = String(noLabel).trim();
+    } else if (o.onscreenLabel != null) {
+      if (o.onscreenLabel === true) throw new Error('--onscreen-label needs the text to show: --onscreen-label "AI-generated"');
+      label = String(o.onscreenLabel).trim();
+      if (!label) throw new Error(`an empty --onscreen-label is only allowed with --no-label "reason" (it is recorded); otherwise leave it out for the default "${DEFAULT_LABEL[type]}"`);
+    } else label = DEFAULT_LABEL[type];
+  } else if (o.tool || o.prompt || o.onscreenLabel != null || noLabel !== null || o.verticalOk) throw new Error('--tool, --prompt, --onscreen-label, --no-label and --vertical-ok are for generated-image and generated-video, not ' + type);
   if (type === 'lut') { try { validateCube(source); } catch (e) { throw new Error(`${path.basename(source)} is not a usable .cube LUT: ${e.message}`); } }
   const rel = posix(path.join('brand', 'licensed', type, `${id}${ext}`));
   const dest = safePath(root, rel);
@@ -201,6 +232,7 @@ export function addAsset(root, source, o = {}) {
     id, type, title, artist: String(o.artist || ''), source: String(o.source || ''), url: String(o.url || ''), plan: String(o.plan || ''), licence: String(o.licence || ''),
     channels: csv(o.channels), file: rel, sha256: sha, credit: String(o.credit || ''), downloaded: today(), notes: String(o.notes || ''),
   };
+  if (gen) Object.assign(rec, { generated: true, tool: String(o.tool).trim(), prompt: String(o.prompt || ''), onscreen_label: label, ...(noLabelReason ? { no_label_reason: noLabelReason } : {}), ...(o.verticalOk ? { vertical_ok: true } : {}) });
   reg.assets.push(rec);
   saveRegister(root, reg);
   return rec;
@@ -268,14 +300,50 @@ export function usedOwnFiles(videoDir) {
 export function resolveAsset(root, id, wantType) {
   const rec = findAsset(loadRegister(root), String(id));
   if (!rec) throw new Error(`the asset "${id}" is not in ${REGISTER}: video licensed add <file> --type ${wantType || '...'}`);
-  if (wantType && rec.type !== wantType) throw new Error(`the asset "${id}" is a ${rec.type}, but it is used as a ${wantType}`);
+  if (!typeOk(rec.type, wantType)) throw new Error(`the asset "${id}" is a ${rec.type}, but it is used as a ${wantType}${ACCEPTS[wantType] ? ` (allowed here: ${ACCEPTS[wantType].join(', ')})` : ''}`);
   const abs = safePath(root, rec.file);
   if (!fs.existsSync(abs)) throw new Error(`the file of "${id}" is missing: ${rec.file}`);
   return { rec, abs };
 }
 
+/* ── generated assets: the on-screen label, and the vertical rule ───────────────────────────────────────────────────────── */
+const foldText = (t) => String(t).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const strings = (v, out = []) => { if (typeof v === 'string') out.push(v); else if (Array.isArray(v)) v.forEach((x) => strings(x, out)); else if (v && typeof v === 'object') Object.values(v).forEach((x) => strings(x, out)); return out; };
+// the text the video shows: build/on_screen_text.txt when the engine wrote one, else every text in the props of the drawn scenes of
+// scenes.json (a clip scene draws no props); null when neither can be read
+export function onScreenText(videoDir) {
+  try { return { text: fs.readFileSync(path.join(videoDir, 'build', 'on_screen_text.txt'), 'utf8'), source: 'build/on_screen_text.txt' }; } catch { /* the engine does not write it (yet) */ }
+  const raw = readJSON(path.join(videoDir, 'scenes.json'), null);
+  const list = Array.isArray(raw) ? raw : raw && Array.isArray(raw.scenes) ? raw.scenes : null;
+  if (!list) return null;
+  return { text: list.flatMap((sc) => (sc && !sc.clip ? strings(sc.props) : [])).join('\n'), source: 'the scene props in scenes.json' };
+}
+// for the generated records a video uses: { problems, skipped, pass } (lines of text). A label that is not on screen is a problem with no
+// override; a label that could not be looked for is SKIPPED (said, never a silent PASS); no label needs a recorded reason.
+export function labelCheck(videoDir, records, read = onScreenText) {
+  const res = { problems: [], skipped: [], pass: [] };
+  let seen;
+  for (const a of records.filter(isGenerated)) {
+    const label = String(a.onscreen_label || '').trim();
+    if (!label) {
+      if (String(a.no_label_reason || '').trim()) res.pass.push(`${a.id}: generated with ${a.tool || 'an unnamed tool'}, recorded without an on-screen label (${a.no_label_reason})`);
+      else res.problems.push(`${a.id} is ${a.type} with no on-screen label and no recorded reason (record it again with --onscreen-label "text" or --no-label "reason")`);
+      continue;
+    }
+    if (seen === undefined) seen = read(videoDir);
+    if (!seen) { res.skipped.push(`the label "${label}" for ${a.id} was NOT checked: no build/on_screen_text.txt and no readable scenes.json (render the video, then check again)`); continue; }
+    if (foldText(seen.text).includes(foldText(label))) res.pass.push(`${a.id} (${a.type}, made with ${a.tool || 'an unnamed tool'}) shows its label "${label}" on screen (read from ${seen.source})`);
+    else res.problems.push(`${a.id} is ${a.type}${a.tool ? ` made with ${a.tool}` : ''} and the video must show the text "${label}" on screen, but it is not in ${seen.source}. Add it to a drawn scene's text`);
+  }
+  return res;
+}
+// may this asset be in the vertical (Instagram) version? Licensed material never; a generated asset only when it was recorded --vertical-ok
+export function verticalOk(root, id) {
+  try { const r = findAsset(loadRegister(root), String(id)); return Boolean(r && isGenerated(r) && r.vertical_ok === true); } catch { return false; }
+}
+
 // PASS/FAIL lines for the assets a video uses (or, with no video folder, for the whole register)
-export function check(root, videoDir = null) {
+export function check(root, videoDir = null, { onScreen = onScreenText } = {}) {
   const lines = [];
   const pass = (text) => lines.push({ status: 'PASS', text });
   const fail = (text) => lines.push({ status: 'FAIL', text });
@@ -291,7 +359,7 @@ export function check(root, videoDir = null) {
     const tag = `${u.id} (${u.use})`;
     const rec = findAsset(reg, u.id);
     if (!rec) { fail(`${tag}: not in ${REGISTER}`); continue; }
-    if (u.type && rec.type !== u.type) { fail(`${tag}: it is a ${rec.type}, used as a ${u.type}`); continue; }
+    if (u.type && !typeOk(rec.type, u.type)) { fail(`${tag}: it is a ${rec.type}, used as a ${u.type}`); continue; }
     let abs;
     try { abs = safePath(root, rec.file); } catch (e) { fail(`${tag}: ${e.message}`); continue; }
     if (!fs.existsSync(abs)) { fail(`${tag}: the file ${rec.file} is missing`); continue; }
@@ -299,12 +367,19 @@ export function check(root, videoDir = null) {
     if (!rec.sha256) { fail(`${tag}: no sha256 recorded`); continue; }
     if (sha !== rec.sha256) { fail(`${tag}: the file changed since it was recorded (sha256 differs)`); continue; }
     if (rec.type === 'lut') { try { validateCube(abs); } catch (e) { fail(`${tag}: not a usable .cube: ${e.message}`); continue; } }
-    if (videoDir) {
+    if (videoDir && !isGenerated(rec)) {   // a generated asset has no source with a safelist
       if (!slug) { fail(`${tag}: brand/brand.json has no slug, so the channel cannot be checked against the channel's safelist`); continue; }
       const ch = Array.isArray(rec.channels) ? rec.channels : [];
       if (!ch.includes(slug)) { fail(`${tag}: the channel "${slug}" is not in its channels (${ch.join(', ') || 'none'}). Safelist the channel with the source that licenses it (Uppbeat: Account, Safelist), then  video licensed channels ${rec.id} ${[...ch, slug].join(',')}`); continue; }
     }
-    pass(`${tag}: ${rec.type} "${rec.title}"${rec.artist ? ` by ${rec.artist}` : ''}, file and hash match${videoDir ? `, channel ${slug} listed` : ''}`);
+    pass(`${tag}: ${rec.type} "${rec.title}"${rec.artist ? ` by ${rec.artist}` : ''}, file and hash match${videoDir && !isGenerated(rec) ? `, channel ${slug} listed` : ''}${isGenerated(rec) ? ` ${generatedTag(rec)}` : ''}`);
+  }
+  if (videoDir) {   // the on-screen label of every generated asset the video uses (a FAIL here fails the check; SKIPPED does not, but is never a PASS)
+    const recs = [...new Map(used.map((u) => [u.id, findAsset(reg, u.id)]).filter(([, r]) => isGenerated(r))).values()];
+    const lab = labelCheck(videoDir, recs, onScreen);
+    for (const t of lab.pass) pass(t);
+    for (const t of lab.problems) fail(t);
+    for (const t of lab.skipped) lines.push({ status: 'SKIPPED', text: t });
   }
   return { ok: !lines.some((l) => l.status === 'FAIL'), lines, used };
 }
@@ -328,7 +403,10 @@ export function notesFor(videoDir) {
 }
 
 /* ── credits ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
-export const creditLine = (r) => (r.credit && r.credit.trim() ? r.credit.trim() : [`"${r.title}"${r.artist ? ` by ${r.artist}` : ''}`, r.source ? `from ${r.source[0].toUpperCase()}${r.source.slice(1)}` : '', r.url ? `(${r.url})` : ''].filter(Boolean).join(', ').replace(', (', ' ('));
+// "[generated with TOOL; on-screen label "X"]": what the credits block and the approval record say about a generated asset
+export const generatedTag = (r) => `[generated with ${r.tool || 'an unnamed tool'}; ${String(r.onscreen_label || '').trim() ? `on-screen label "${String(r.onscreen_label).trim()}"` : `no on-screen label: ${r.no_label_reason || 'none recorded'}`}]`;
+const baseCredit = (r) => (r.credit && r.credit.trim() ? r.credit.trim() : [`"${r.title}"${r.artist ? ` by ${r.artist}` : ''}`, r.source ? `from ${r.source[0].toUpperCase()}${r.source.slice(1)}` : '', r.url ? `(${r.url})` : ''].filter(Boolean).join(', ').replace(', (', ' ('));
+export const creditLine = (r) => (isGenerated(r) ? `${baseCredit(r)} ${generatedTag(r)}` : baseCredit(r));
 // the assets of a video that need a credit: everything but a LUT (a grade is not shown or heard as someone's work)
 export function creditsOf(root, videoDir) {
   const reg = loadRegister(root), seen = new Set(), out = [];
@@ -366,17 +444,33 @@ export function writeCredits(root, videoDir) {
   return block;
 }
 
+// lines under "## Final" in approvals.md (the same layout checks.mjs keeps); earlier lines are never rewritten
+function appendApproval(videoDir, lines) {
+  const f = path.join(videoDir, 'approvals.md');
+  let text = fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '# Approvals\n\nAdded by the kit; earlier lines are never rewritten.\n';
+  const h = '## Final', stamp = new Date().toLocaleString('sv-SE').slice(0, 16);
+  if (!text.includes(`\n${h}\n`)) text = `${text.trimEnd()}\n\n${h}\n`;
+  const at = text.indexOf(`\n${h}\n`) + h.length + 2, next = text.indexOf('\n## ', at);
+  const entry = lines.map((l) => `- ${stamp}  ${l}\n`).join('');
+  fs.writeFileSync(f, next < 0 ? `${text.trimEnd()}\n${entry}` : `${text.slice(0, next).trimEnd()}\n${entry}${text.slice(next)}`);
+}
+
 // the gate used by `video approve final`: throws when the check fails or the credits are not in the description
-export function gate(videoDir) {
+export function gate(videoDir, opts = {}) {
   const root = channelRoot(videoDir);
   const used = usedAssets(videoDir);
   if (!used.length) return { used: [], records: [] };
   if (!root) throw new Error('this video uses licensed assets but is not inside a channel folder: nothing can be checked');
-  const r = check(root, videoDir);
+  const r = check(root, videoDir, opts);
   if (!r.ok) throw new Error(`licensed assets: not cleared\n${r.lines.filter((l) => l.status === 'FAIL').map((l) => `  FAIL ${l.text}`).join('\n')}\nfix these (video licensed check <folder> shows them all), then approve again`);
   const cur = creditsCurrent(root, videoDir);
   if (!cur.ok) throw new Error('the credits block ("Music and assets") in out/youtube.txt is missing or out of date: run  video licensed credits <folder>  then record the fact check again if it asks, and approve');
-  return { used, records: creditsOf(root, videoDir) };
+  const records = creditsOf(root, videoDir), notes = [];
+  // the approval record (approvals.md) names every generated asset and its label; a label that could not be checked says SKIPPED
+  for (const a of records.filter(isGenerated)) notes.push(`generated asset ${a.id} (${a.type}) ${generatedTag(a)}`);
+  for (const l of r.lines.filter((x) => x.status === 'SKIPPED')) notes.push(`SKIPPED: ${l.text}`);
+  if (notes.length) appendApproval(videoDir, notes);
+  return { used, records, notes };
 }
 
 /* ── command line ───────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -384,17 +478,23 @@ export function cli(loose, flags, cwd = process.cwd()) {
   const [sub, a1, a2] = loose;
   const rootFor = (p) => { const r = channelRoot(flags.channel && flags.channel !== true ? flags.channel : p || cwd); if (!r) throw new Error('run this inside a channel folder (one with brand/brand.json), or give --channel <folder>'); return r; };
   const text = (k) => (typeof flags[k] === 'string' ? flags[k] : '');
+  const flagText = text;
   switch (sub) {
     case 'add': {
-      const root = rootFor(), rec = addAsset(root, a1 ? path.resolve(cwd, a1) : null, { type: text('type'), title: text('title'), artist: text('artist'), url: text('url'), channels: text('channels'), credit: text('credit'), id: text('id'), notes: text('notes'), licence: text('licence'), source: text('source'), plan: text('plan'), move: Boolean(flags.move) });
+      const root = rootFor(), rec = addAsset(root, a1 ? path.resolve(cwd, a1) : null, { type: text('type'), title: text('title'), artist: text('artist'), url: text('url'), channels: text('channels'), credit: text('credit'), id: text('id'), notes: text('notes'), licence: text('licence'), source: text('source'), plan: text('plan'), move: Boolean(flags.move),
+        tool: flagText('tool'), prompt: flagText('prompt'), onscreenLabel: 'onscreen-label' in flags ? flags['onscreen-label'] : undefined, noLabel: 'no-label' in flags ? flags['no-label'] : undefined, verticalOk: Boolean(flags['vertical-ok']) });
       console.log(`recorded ${rec.id} (${rec.type}): ${rec.file}\n  sha256 ${rec.sha256.slice(0, 16)}...`);
-      if (!rec.channels.length) console.log(`note: channels is empty. If your source has a safelist (Uppbeat: Account, Safelist), safelist this channel for the YouTube upload, then record it:  video licensed channels ${rec.id} ${channelSlug(root) || '<channel slug>'}`);
+      if (isGenerated(rec)) {
+        console.log(`  ${generatedTag(rec)}; ${rec.vertical_ok ? 'allowed in the vertical version' : 'YouTube only (add --vertical-ok to allow the vertical version)'}`);
+        if (!rec.onscreen_label) console.log(`note: recorded WITHOUT an on-screen label ("${rec.no_label_reason}"). Make sure that is honest where the video is posted.`);
+        else console.log(`note: the video must show the text "${rec.onscreen_label}" on screen (in a drawn scene's text) while this is up; video approve final refuses otherwise.`);
+      } else if (!rec.channels.length) console.log(`note: channels is empty. If your source has a safelist (Uppbeat: Account, Safelist), safelist this channel for the YouTube upload, then record it:  video licensed channels ${rec.id} ${channelSlug(root) || '<channel slug>'}`);
       return;
     }
     case 'list': {
       const rows = listAssets(rootFor(), text('type') || null);
       if (!rows.length) return console.log('no licensed assets recorded (video licensed add <file> --type ...)');
-      for (const r of rows) console.log(`${r.id.padEnd(24)} ${r.type.padEnd(15)} ${r.title}${r.artist ? ` - ${r.artist}` : ''}  [${(r.channels || []).join(', ') || 'no channel safelisted'}]  ${r.file}`);
+      for (const r of rows) console.log(`${r.id.padEnd(24)} ${r.type.padEnd(15)} ${r.title}${r.artist ? ` - ${r.artist}` : ''}  [${(r.channels || []).join(', ') || 'no channel safelisted'}]  ${r.file}${isGenerated(r) ? `  ${generatedTag(r)}${r.vertical_ok ? ' [vertical ok]' : ' [YouTube only]'}` : ''}`);
       return;
     }
     case 'check': {
@@ -420,7 +520,7 @@ export function cli(loose, flags, cwd = process.cwd()) {
       return console.log(`removed ${r.rec.id} from the register${r.removed ? ` and deleted ${r.rec.file}` : ''}`);
     }
     default:
-      console.log('video licensed add <file> --type T --title "..." [--artist ..] [--url ..] [--channels a,b] [--credit ".."] [--id slug] [--notes ..] [--move]\nvideo licensed list [--type T]\nvideo licensed check [<video folder>]\nvideo licensed channels <id> a,b\nvideo licensed credits <video folder>\nvideo licensed remove <id> [--keep-file]');
+      console.log('video licensed add <file> --type T --title "..." [--artist ..] [--url ..] [--channels a,b] [--credit ".."] [--id slug] [--notes ..] [--move]\n  generated-video|generated-image also need --tool ".." and take [--prompt ".."] [--onscreen-label ".."] [--no-label "reason"] [--vertical-ok]\nvideo licensed list [--type T]\nvideo licensed check [<video folder>]\nvideo licensed channels <id> a,b\nvideo licensed credits <video folder>\nvideo licensed remove <id> [--keep-file]');
       if (sub) process.exitCode = 1;
   }
 }

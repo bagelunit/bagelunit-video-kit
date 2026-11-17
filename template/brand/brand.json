@@ -31,6 +31,10 @@
   "cta": {
     "line": ""
   },
+  "writing": {
+    "human_score_min": 90,
+    "banned_phrases": []
+  },
   "reels_folder": "",
   "tools": {
     "have": [],

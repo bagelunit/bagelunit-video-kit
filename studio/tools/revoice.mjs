@@ -23,7 +23,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as scenes from './scenes.mjs';
-import { voiceSetup, creditCheck, chunkDone } from './video.mjs';
+import * as checks from './checks.mjs';
+import { voiceSetup, creditCheck, chunkDone, relay } from './video.mjs';
 
 export const RATE_WARN = 0.2;                 // a line more than 20% faster or slower than the episode is worth a listen
 const LEVEL = 'loudnorm=I=-14:TP=-1.5:LRA=11';  // the level video voice joins the voice at
@@ -164,6 +165,13 @@ export function useRevoiced(dir, log = console.log) {
     if (fs.existsSync(out[x])) fs.renameSync(out[x], base[x]); else fs.rmSync(base[x], { force: true });
   }
   scenes.writeWords(dir, readJSON(base.words, []));          // word_index.txt to match
+  const srcNew = path.join(dir, 'build', 'voice_source-revoiced.json');
+  if (fs.existsSync(srcNew)) {                               // who spoke the voice now (a mix of two voices says so)
+    const rec = { ...readJSON(srcNew, {}), at: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), vo_sha256: checks.sha256File(base.vo) };
+    fs.writeFileSync(path.join(dir, 'build', 'voice_source.json'), JSON.stringify(rec, null, 1) + '\n');
+    fs.rmSync(srcNew, { force: true });
+    checks.logVoice(dir, `a line was voiced again: ${checks.voiceLabel(rec)}, word times ${rec.timings}, audio/vo.mp3 ${String(rec.vo_sha256).slice(0, 12)}`);
+  }
   log(`audio/vo.mp3 is now the revoiced voice (the one before it: ${rel(dir, keep.vo)}, ${rel(dir, keep.words)}).`);
   log('Note: video voice joins the voice from its chunks again, which would undo this. Change script.txt to the new words too, so the script, captions and fact check agree.');
 }
@@ -185,22 +193,25 @@ export async function cli(video, flags, log = console.log) {
   const request = lead.text ? `${lead.text} ${newText}` : newText;
 
   const set = voiceSetup(video, flags, { verb: 'revoicing' });
-  const id = createHash('sha256').update(JSON.stringify([request, set.voiceCfg ?? null, set.speed, set.extra])).digest('hex').slice(0, 12);
+  // the provider joins the take's id only when it is not ElevenLabs, so takes already paid for keep their id (and stay free)
+  const id = createHash('sha256').update(JSON.stringify([request, set.voiceCfg ?? null, set.speed, set.extra, ...(set.provider && set.provider !== 'elevenlabs' ? [set.provider] : [])])).digest('hex').slice(0, 12);
   const take = path.join(dir, 'build', 'revoice', id);
-  const done = chunkDone(take, request);
+  const done = chunkDone(take, request, set.provider);
   log(`line: "${words.slice(span.a, span.b + 1).map((w) => w.w).join(' ')}" (${words[span.a].s.toFixed(2)} to ${words[span.b].e.toFixed(2)} s in ${rel(dir, base.vo)})`);
   log(`lead-in: ${lead.text ? `"${lead.text}" (${span.a - lead.from} word${span.a - lead.from === 1 ? '' : 's'}, voiced for the pace, then cut off)` : 'none (the line is the first thing said)'}`);
-  log(`will send: ${request.length} characters (${lead.text.length ? `${lead.text.length + 1} lead-in + ` : ''}${newText.length} new line) at speed ${set.speed}${done ? ': already voiced, free (reused)' : ': a paid voice call'}`);
+  log(`will send: ${request.length} characters (${lead.text.length ? `${lead.text.length + 1} lead-in + ` : ''}${newText.length} new line) at speed ${set.speed}${done ? ': already voiced, free (reused)' : set.provider === 'elevenlabs' ? ': a paid voice call' : set.provider === 'local' ? ': the free built-in voice, no credits' : ''}`);
   log(`result: ${rel(dir, out.vo)} + ${rel(dir, out.words)}${vertical ? ' (the vertical voice only; the YouTube voice is not touched)' : ' (the YouTube voice is not touched until --use)'}`);
   if (/\d/.test(newText)) log('note: the new line has a number in it. Check it is in research.md before it is said.');
   if (!flags.apply) { log('a dry run: nothing sent. Add --apply to voice it.'); return { dry: true, request, id }; }
 
-  if (!done) creditCheck([request], path.join(dir, 'build', 'revoice'), flags);
+  if (!done) creditCheck([request], path.join(dir, 'build', 'revoice'), flags, set.provider);
   fs.mkdirSync(path.join(take, 'audio'), { recursive: true });
   fs.writeFileSync(path.join(take, 'script.txt'), request + '\n');
   fs.writeFileSync(path.join(take, 'reel.json'), JSON.stringify({ voice: set.voiceCfg }, null, 1) + '\n');
-  const r = spawnSync(process.env.PYTHON || 'python3', [set.py, take, '--speed', String(set.speed), ...set.extra], { stdio: 'inherit' });
-  if (r.status !== 0) throw new Error('voice.py stopped. Nothing was changed; fix the cause and run revoice again (a take already made is not paid for twice).');
+  const r = spawnSync(process.env.PYTHON || 'python3', [set.py, take, '--speed', String(set.speed), ...set.extra, ...set.providerArgs], { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', maxBuffer: 1 << 26 });
+  relay(r.stderr, new Set());
+  if (r.status !== 0) throw new Error('voice.py stopped. Nothing was changed; fix the cause and run revoice again (an ElevenLabs take already made is not paid for twice).');
+  const takeSource = readJSON(path.join(take, 'build', 'voice_source.json'), null);
   const takeWords = readJSON(path.join(take, 'build', 'words.json'), []);
   const takeLen = mediaLength(path.join(take, 'audio', 'vo.mp3'));
   const plan = planSplice({ words, length: mediaLength(base.vo), pauses: readJSON(base.pauses, []) || [] }, span, { words: takeWords, length: takeLen }, toks(newText).length);
@@ -214,6 +225,12 @@ export async function cli(video, flags, log = console.log) {
   writeResult(out, plan);
   const length = mediaLength(out.vo);
   const late = scenes.clockCheck(plan.words, length, rel(dir, out.vo));
+  if (takeSource?.timings === 'estimated') log(`WARNING: the new line's word times are estimated (not measured), so the cut between the lead-in and the line may clip a word and captions may drift. Listen to it. ${checks.WHISPER_ADVICE} then run revoice again.`);
+  if (!vertical) {    // who spoke the revoiced voice: --use makes it the record of audio/vo.mp3
+    const was = checks.voiceSource(dir) || {};
+    const timings = [was.timings, takeSource?.timings].includes('estimated') ? 'estimated' : takeSource?.timings || was.timings || 'provider';
+    fs.writeFileSync(path.join(dir, 'build', 'voice_source-revoiced.json'), JSON.stringify({ ...was, provider: was.provider && was.provider !== takeSource?.provider && takeSource?.provider ? 'mixed' : takeSource?.provider || was.provider || set.provider, timings, revoiced: true }, null, 1) + '\n');
+  }
   log(`spliced: ${rel(dir, out.vo)} ${length?.toFixed(2)} s (${plan.delta >= 0 ? '+' : ''}${plan.delta.toFixed(2)} s), ${plan.words.length} words → ${rel(dir, out.words)}`);
   if (late) log(`WARNING: ${late}`);
   for (const l of paceReport({ fresh: rate(plan.newWords), old: rate(words.slice(span.a, span.b + 1)), episode: episodeRate(words) })) log(l);

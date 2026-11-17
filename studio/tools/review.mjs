@@ -7,9 +7,15 @@
 // Writes <channel>/reviews/YYYY-MM-DD.md: what the files say (observations, each number with the videos it comes from, matched
 // to this channel's video folders by the YouTube id in out/youtube-published.json or by title), kept apart from what might
 // explain it (hypotheses), with small samples flagged, and up to 5 tests for the next video.
+//
+// A video's audience retention export (a CSV whose file name holds the video's folder name, YouTube id or title) is laid on that
+// video's scenes and chapters (videos/<name>/build/scene_times.json, scenes.json, out/chapters.txt) in a "Retention" section:
+// the first 30 seconds, the steepest falls and the scene and chapter each one sits in, hypotheses (not proven) and 1 to 3 tests.
+// The reading and the mapping are in retention.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
 import { findBrand } from './checks.mjs';
+import * as ret from './retention.mjs';
 
 const readJSON = (f, d = null) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 
@@ -21,7 +27,8 @@ Download one:
      Views and Watch time (hours) (and Duration and Video publish time if they are not shown).
   4. Export current view (the down arrow), "Comma-separated values (.csv)". Unzip the download.
   5. Run:  node video.mjs review <channel folder> "<unzipped folder>/Table data.csv"
-Optional: a video's audience retention export (Advanced mode, that video, Audience retention, Export) as another file.`;
+Optional: a video's audience retention export (Advanced mode, that video, Audience retention, Export) as another file. Put the
+video's folder name or YouTube id in the file name (moon.csv) so the kit can lay the curve on that video's scenes and chapters.`;
 
 /* ── CSV ────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 export function parseCsv(text) {
@@ -81,7 +88,7 @@ export function readExport(file) {
   const rows = parseCsv(fs.readFileSync(file, 'utf8'));
   if (!rows.length) return { file, kind: 'empty', videos: [] };
   const head = rows[0].map(norm);
-  if (head.some((h) => h.includes('retention')) && head.some((h) => /position|time/.test(h))) return readRetention(file, head, rows.slice(1));
+  if (ret.looksLikeRetention(rows[0])) return readRetention(file, rows[0], rows.slice(1));
   const col = {};
   for (const [key, names] of Object.entries(COLUMNS)) { const i = head.findIndex((h) => names.includes(h)); if (i >= 0) col[key] = i; }
   if (head.includes('date')) return { file, kind: 'chart', videos: [], why: 'a day-by-day chart or totals export; the review needs the table (Table data.csv)' };
@@ -107,14 +114,13 @@ export function readExport(file) {
 
 // an audience retention export: position in the video (a percentage or a time) and the share still watching
 function readRetention(file, head, rows) {
-  const pi = head.findIndex((h) => /position|time/.test(h) && !h.includes('retention')), ri = head.findIndex((h) => h.includes('retention') && !h.includes('relative'));
-  const pts = rows.map((r) => ({ raw: r[pi], at: String(r[pi]).includes(':') ? seconds(r[pi]) : num(r[pi]), keep: num(r[ri]) })).filter((p) => p.at != null && p.keep != null).sort((a, b) => a.at - b.at);
-  if (pts.length < 3) return { file, kind: 'unknown', videos: [], why: 'a retention file with too few points to read' };
-  const unit = String(rows[0]?.[pi] ?? '').includes(':') ? 's' : '%';
+  const curve = ret.parseRows(head, rows);
+  if (curve.why) return { file, kind: 'unknown', videos: [], why: curve.why };
+  const pts = curve.points, unit = curve.unit;
   let drop = { d: 0 };
   for (let i = 1; i < pts.length; i++) { const d = pts[i - 1].keep - pts[i].keep; if (d > drop.d) drop = { d, from: pts[i - 1], to: pts[i] }; }
   const early = pts.find((p) => (unit === 's' ? p.at >= 30 : p.at >= 10)) || null;
-  return { file, kind: 'retention', videos: [], unit, early, drop, last: pts.at(-1), name: path.basename(file, path.extname(file)) };
+  return { file, kind: 'retention', videos: [], unit, curve, early, drop, last: pts.at(-1), name: path.basename(file, path.extname(file)) };
 }
 
 /* ── this channel's video folders ───────────────────────────────────────────────────────────────────────────────────── */
@@ -138,6 +144,29 @@ export function matchVideos(videos, kit) {
   return videos;
 }
 
+// which video an audience retention file belongs to: its file name (then its folder's name) holds the video's folder name, YouTube id or
+// title. The longest match wins. -> { folder, row } (either may be null), or null when nothing matches
+export function matchRetention(x, kit, rows) {
+  const tryName = (name) => {
+    const hay = fold(name);
+    let best = null, len = 0;
+    const hit = (key, found) => { const f = fold(key); if (f.length >= 4 && hay.includes(f) && f.length > len) { best = found; len = f.length; } };
+    for (const k of kit) for (const key of [k.id, k.name, ...k.titles]) if (key) hit(key, { folder: k.name, row: rows.find((v) => v.folder === k.name) || null });
+    for (const v of rows) for (const key of [v.id, v.title]) if (key) hit(key, { folder: v.folder || null, row: v });
+    return best;
+  };
+  return tryName(x.name) || tryName(path.basename(path.dirname(x.file)));
+}
+// the analysis of every retention export: matched to a video folder, laid on its scenes and chapters
+export function retentionReports(exports, kit, brandDir) {
+  const rows = [...new Map(exports.filter((e) => e.kind === 'table').flatMap((e) => e.videos).map((v) => [v.id || fold(v.title), v])).values()];
+  return exports.filter((e) => e.kind === 'retention').map((x) => {
+    const m = matchRetention(x, kit, rows) || { folder: null, row: null };
+    const video = m.folder && brandDir ? ret.loadVideo(path.join(brandDir, 'videos', m.folder)) : {};
+    return { name: x.name, file: x.file, folder: m.folder, title: m.row?.title || null, analysis: ret.analyse(x.curve, video, { duration: m.row?.duration, avd: m.row?.avd }) };
+  });
+}
+
 /* ── the review ─────────────────────────────────────────────────────────────────────────────────────────────────────── */
 const median = (xs) => { const a = xs.filter((x) => Number.isFinite(x)).sort((p, q) => p - q); if (!a.length) return null; const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
 const mmss = (s) => (s == null ? 'n/a' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`);
@@ -147,7 +176,75 @@ const cell = (t) => String(t).replace(/\|/g, '/').replace(/\n/g, ' ');
 const q = (v) => `"${v.title}"${v.folder ? ` (videos/${v.folder})` : ''}`;
 export const SMALL = { videos: 5, days: 7 };
 
-export function buildReview({ channel, files, exports, today = new Date() }) {
+/* ── the Retention section ─────────────────────────────────────────────────────────────────────────────────────────────── */
+// reports: retentionReports(...). Returns { md, tests }. Every number is from a curve or from the video's own files; a hypothesis is
+// said not to be proven; a test changes one thing.
+export function retentionSection(reports) {
+  const out = ['## Retention (where viewers leave)', ''];
+  const tests = [];
+  if (!reports.length) {
+    out.push('No audience retention export was given, so nothing can be said about where viewers leave (the kit never guesses it).',
+      'Download one per video: YouTube Studio, Analytics in Advanced mode, that video, Audience retention, Export. Put the video\'s folder name or YouTube id in the file name (for example `moon.csv`) so the curve can be laid on that video\'s scenes and chapters.');
+    return { md: out.join('\n') + '\n', tests };
+  }
+  const n = reports.length;
+  out.push(n < 5
+    ? `Sample: ${n} video${n === 1 ? '' : 's'} with a retention curve. With fewer than 5, every line below is about one video and no pattern across videos is drawn.`
+    : `Sample: ${n} videos with a retention curve.`, '');
+  out.push('**What the curves say** (numbers from the files; falls are measured over a window of a few seconds):', '');
+  for (const r of reports) {
+    const label = r.folder ? `"${r.title || r.folder}" (videos/${r.folder})` : `"${r.name}" (not matched to a video folder of this channel: put its folder name or YouTube id in the file name)`;
+    const a = r.analysis;
+    out.push(...ret.lines(a, label).map((l) => (l.startsWith('  ') ? `  - ${l.trim()}` : `- ${l}`)));
+    if (a.durationFrom && a.durationFrom !== 'build/scene_times.json') out.push(`  - Length taken from ${a.durationFrom}.`);
+    for (const note of a.notes) out.push(`  - Not available: ${note}.`);
+  }
+  if (n >= 5) {
+    const first = reports.map((r) => r.analysis.first30?.keep).filter((x) => x != null), opening = reports.filter((r) => r.analysis.drops[0]?.inFirst30).length;
+    if (first.length >= 5) out.push(`- Across ${first.length} videos: median ${f1(median(first), '%')} still watching at 0:30; in ${opening} of ${n} the steepest fall is inside the first 30 seconds.`);
+  }
+  out.push('', '**Hypotheses** (what might explain a fall; not proven, each is about one video):', '');
+  const hyp = [];
+  for (const r of reports) {
+    const label = r.folder ? `"${r.title || r.folder}"` : `"${r.name}"`;
+    r.analysis.drops.slice(0, 2).forEach((d, i) => {
+      const when = d.percent ? `${f1(d.from)}% of the video` : mmss(d.from);
+      if (d.percent || !d.scene) { hyp.push(`${label}, fall ${i + 1} (${when}): it cannot be tied to a scene (no scene times for this video), so no cause is suggested.`); return; }
+      const sc = d.scene, tag = `${label}, fall ${i + 1} (${when}, scene ${sc.n})`;
+      if (d.inFirst30) hyp.push(`${tag}: the opening may promise less than the title does, or take too long to get going. (hypothesis, not proven)`);
+      else if (d.atChapterStart) hyp.push(`${tag}: a chapter begins here${d.chapter ? ` ("${d.chapter.title}")` : ''}; a change of subject may lose the viewers who came for the part before. (hypothesis, not proven)`);
+      else if (sc.length >= 12) hyp.push(`${tag}: the scene runs ${f1(sc.length)} s; a long scene may feel slow. (hypothesis, not proven)`);
+      else hyp.push(`${tag}: what the scene says${sc.narration ? ` ("${sc.narration}")` : ''} may not be what viewers were there for, or the picture may not change while it is said. (hypothesis, not proven)`);
+    });
+  }
+  out.push(...(hyp.length ? hyp.map((x) => `- ${x}`) : ['- None: no fall of 2 points or more was found in these curves.']));
+  // tests: one change each, drawn from the steepest fall of the videos that have a scene to point at
+  const f = (x) => f1(x, '%');
+  const withDrop = reports.filter((r) => r.analysis.drops[0]).sort((p, q) => q.analysis.drops[0].lost - p.analysis.drops[0].lost);
+  const name = (r) => (r.folder ? `"${r.title || r.folder}"` : `"${r.name}"`);
+  const hook = withDrop.find((r) => r.analysis.drops[0].inFirst30) || reports.find((r) => r.analysis.first30?.keep != null);
+  if (hook) {
+    const a = hook.analysis, k = a.first30?.keep;
+    tests.push(`**Hook.** In the next video change only the first 30 seconds (say the payoff's question first, cut what comes before it). Read: still watching at 0:30 in its retention curve${k != null ? `, against ${f(k)} in ${name(hook)}` : ''}.`);
+  }
+  const ch = withDrop.find((r) => r.analysis.drops.some((d) => d.atChapterStart && d.chapter && !d.inFirst30));
+  if (ch) {
+    const d = ch.analysis.drops.find((x) => x.atChapterStart && x.chapter && !x.inFirst30);
+    tests.push(`**Chapter order.** ${name(ch)} loses ${f1(d.lost)} points as "${d.chapter.title}" begins (${mmss(d.from)}). In the next video with a section like it, change only its place (one chapter later, or earlier), or open it with one bridging sentence, not both. Read: the fall at that chapter's start in the next retention curve.`);
+  }
+  const pace = withDrop.find((r) => r.analysis.drops.some((d) => d.scene && d.scene.length >= 12 && !d.inFirst30));
+  if (pace) {
+    const d = pace.analysis.drops.find((x) => x.scene && x.scene.length >= 12 && !x.inFirst30);
+    tests.push(`**Scene pace.** Scene ${d.scene.n} of ${name(pace)} runs ${f1(d.scene.length)} s and the curve falls ${f1(d.lost)} points in it. In the next video keep each scene shorter than that one (split it, or cut its narration to the key sentence) and change nothing else about pace. Read: the steepest fall in the next curve, and which scene it is in.`);
+  }
+  if (!tests.length) tests.push(withDrop.length
+    ? 'No test can be drawn yet: the falls could not be tied to a scene or a chapter (no scene times or no length for these videos). Put the video\'s folder name in the file name, run `video render` (it writes build/scene_times.json) and review again.'
+    : 'No test can be drawn from these curves: they hold no fall of 2 points or more and no first-30-seconds number.');
+  out.push('', '**Tests for the next video** (one change each, at most 3):', '', ...tests.slice(0, 3).map((x, i) => `${i + 1}. ${x}`));
+  return { md: out.join('\n') + '\n', tests: tests.slice(0, 3) };
+}
+
+export function buildReview({ channel, files, exports, today = new Date(), retentionReports: reports = [] }) {
   const tables = exports.filter((x) => x.kind === 'table'), retention = exports.filter((x) => x.kind === 'retention'), skipped = exports.filter((x) => !['table', 'retention'].includes(x.kind));
   // one row per video: a later file replaces an earlier one for the same video
   const byKey = new Map();
@@ -248,8 +345,9 @@ ${hyp.length ? hyp.map((x) => `- ${x}`).join('\n') : '- None this time: the diff
 
 ## Tests for the next video (one change each)
 ${tests.slice(0, 5).map((x, i) => `${i + 1}. ${x}`).join('\n')}
-`;
-  return { md, headline, date, videos, missing, flags, hypotheses: hyp, tests: tests.slice(0, 5) };
+
+${retentionSection(reports).md}`;
+  return { md, headline, date, videos, missing, flags, hypotheses: hyp, tests: tests.slice(0, 5), retention: reports, retentionTests: retentionSection(reports).tests };
 }
 
 export function review(dir, inputs, { today = new Date(), log = console.log } = {}) {
@@ -262,7 +360,8 @@ export function review(dir, inputs, { today = new Date(), log = console.log } = 
   const exports = files.map(readExport);
   if (!exports.some((x) => x.kind === 'table' || x.kind === 'retention')) { const e = new Error(`none of these files is a per-video table export:\n  ${exports.map((x) => `${path.basename(x.file)}: ${x.why || x.kind}`).join('\n  ')}\n\n${HOW_TO_EXPORT}`); e.howTo = true; throw e; }
   for (const x of exports) if (x.kind === 'table') matchVideos(x.videos, kitVideos(brand.dir));
-  const r = buildReview({ channel: brand.cfg.name || path.basename(brand.dir), files, exports, today });
+  const reports = retentionReports(exports, kitVideos(brand.dir), brand.dir);
+  const r = buildReview({ channel: brand.cfg.name || path.basename(brand.dir), files, exports, today, retentionReports: reports });
   const outDir = path.join(brand.dir, 'reviews');
   fs.mkdirSync(outDir, { recursive: true });
   let file = path.join(outDir, `${r.date}.md`);
