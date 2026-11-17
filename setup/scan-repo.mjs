@@ -34,6 +34,10 @@ const HOME_OK = /\/Users\/(runner|runneradmin|you|name|yourname)\b/;   // none e
 const problems = [];
 const add = (f, why) => problems.push(`${f}: ${why}`);
 for (const f of files) {
+  // a workflow step name with a colon and a space in it is invalid YAML (GitHub then rejects the whole workflow before any job runs)
+  if (/^\.github\/workflows\/.*\.ya?ml$/.test(f) && fs.existsSync(path.join(REPO, f))) {
+    fs.readFileSync(path.join(REPO, f), 'utf8').split(/\r?\n/).forEach((l, n) => { if (/^\s*-?\s*name:\s*[^'"\s].*:\s/.test(l)) add(f, `line ${n + 1}: a name with a colon and a space is invalid YAML (reword it or quote it)`); });
+  }
   if (BAD_FILES.test(f)) add(f, 'a key, secret or system file must not be tracked');
   const SAMPLE = false;
   if (BIG_MEDIA.test(f) && !SAMPLE) add(f, 'a render, audio or raw media file must not be tracked');
