@@ -14,7 +14,9 @@ import { makeWorkspace } from './new-workspace.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const VIDEO = path.join(REPO, 'studio', 'tools', 'video.mjs');
-Object.assign(process.env, { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t', GIT_TERMINAL_PROMPT: '0' });
+Object.assign(process.env, { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@t', GIT_TERMINAL_PROMPT: '0',
+  // the temporary repos keep LF on every system: Windows git would otherwise check files out as CRLF and the byte comparisons below would differ
+  GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'false', GIT_CONFIG_KEY_1: 'core.safecrlf', GIT_CONFIG_VALUE_1: 'false' });
 const hasGit = spawnSync('git', ['--version']).status === 0;
 let n = 0;
 const test = async (name, fn) => { try { await fn(); n++; console.log(`ok   ${name}`); } catch (e) { console.error(`FAIL ${name}\n  ${e.stack || e}`); process.exitCode = 1; } };
