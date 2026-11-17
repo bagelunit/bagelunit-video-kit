@@ -1,9 +1,9 @@
-// licensed.mjs · the channel's register of licensed material (Uppbeat is the one allowed outside source: music, sound effects,
-// stock video, motion graphics, LUTs). The kit ships only this mechanism, never a file: the owner downloads each asset by hand
-// from uppbeat.io (there is no API), and `video licensed add` records it. Nothing here touches the network.
+// licensed.mjs · the channel's register of licensed material (music, sound effects, stock video, motion graphics, LUTs from any
+// source you have the rights to; Uppbeat is the one we use and suggest). The kit ships only this mechanism, never a file: you
+// download each asset by hand from wherever you license it, and `video licensed add` records it. Nothing here touches the network.
 //
 //   node video.mjs licensed add <file> --type music|sfx|stock-video|motion-graphic|lut --title "..." [--artist ...] [--url ...]
-//                  [--channels a,b] [--credit "..."] [--id slug] [--notes ...] [--licence ...] [--move]
+//                  [--source name] [--plan name] [--channels a,b] [--credit "..."] [--id slug] [--notes ...] [--licence ...] [--move]
 //   node video.mjs licensed list [--type T]
 //   node video.mjs licensed check [<video folder>]           PASS/FAIL per asset a video uses; exit 1 on any FAIL
 //   node video.mjs licensed channels <id> a,b                 which channels are safelisted for that asset (replaces the list)
@@ -127,11 +127,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 export function addAsset(root, source, o = {}) {
   const type = o.type;
   if (!TYPES.includes(type)) throw new Error(`--type must be one of: ${TYPES.join(', ')}`);
-  if (!source || !fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error(`file not found: ${source || '(none given)'}. Download it from uppbeat.io by hand first`);
+  if (!source || !fs.existsSync(source) || !fs.statSync(source).isFile()) throw new Error(`file not found: ${source || '(none given)'}. Download it first, from wherever you license it (choose WAV when downloading if the site offers it)`);
   const ext = path.extname(source).toLowerCase();
   if (!EXTENSIONS[type].includes(ext)) throw new Error(`a ${type} should be ${EXTENSIONS[type].join(' ')} (this is "${ext || 'no extension'}")`);
   const title = String(o.title || '').trim();
-  if (!title) throw new Error('--title "..." is needed (the name on Uppbeat), it goes in the credits');
+  if (!title) throw new Error('--title "..." is needed (the name on the page you got it from), it goes in the credits; record that page with --url, and add --source and --plan too');
   const id = o.id ? String(o.id) : slugOf(title) || slugOf(path.basename(source, ext));
   if (!ID.test(id)) throw new Error(`the id "${id}" must be lowercase letters, digits and dashes (for example clear-skies); give --id`);
   const reg = loadRegister(root);
@@ -148,7 +148,7 @@ export function addAsset(root, source, o = {}) {
     if (o.move) { try { fs.renameSync(source, dest); } catch { fs.copyFileSync(source, dest); fs.rmSync(source); } } else fs.copyFileSync(source, dest);
   }
   const rec = {
-    id, type, title, artist: String(o.artist || ''), source: 'uppbeat', url: String(o.url || ''), plan: 'business', licence: String(o.licence || ''),
+    id, type, title, artist: String(o.artist || ''), source: String(o.source || ''), url: String(o.url || ''), plan: String(o.plan || ''), licence: String(o.licence || ''),
     channels: csv(o.channels), file: rel, sha256: sha, credit: String(o.credit || ''), downloaded: today(), notes: String(o.notes || ''),
   };
   reg.assets.push(rec);
@@ -234,9 +234,9 @@ export function check(root, videoDir = null) {
     if (sha !== rec.sha256) { fail(`${tag}: the file changed since it was recorded (sha256 differs)`); continue; }
     if (rec.type === 'lut') { try { validateCube(abs); } catch (e) { fail(`${tag}: not a usable .cube: ${e.message}`); continue; } }
     if (videoDir) {
-      if (!slug) { fail(`${tag}: brand/brand.json has no slug, so the channel cannot be checked against Uppbeat's safelist`); continue; }
+      if (!slug) { fail(`${tag}: brand/brand.json has no slug, so the channel cannot be checked against the channel's safelist`); continue; }
       const ch = Array.isArray(rec.channels) ? rec.channels : [];
-      if (!ch.includes(slug)) { fail(`${tag}: the channel "${slug}" is not in its channels (${ch.join(', ') || 'none'}). Safelist the channel in Uppbeat (Account, Safelist), then  video licensed channels ${rec.id} ${[...ch, slug].join(',')}`); continue; }
+      if (!ch.includes(slug)) { fail(`${tag}: the channel "${slug}" is not in its channels (${ch.join(', ') || 'none'}). Safelist the channel with the source that licenses it (Uppbeat: Account, Safelist), then  video licensed channels ${rec.id} ${[...ch, slug].join(',')}`); continue; }
     }
     pass(`${tag}: ${rec.type} "${rec.title}"${rec.artist ? ` by ${rec.artist}` : ''}, file and hash match${videoDir ? `, channel ${slug} listed` : ''}`);
   }
@@ -259,7 +259,7 @@ export function notesFor(videoDir) {
 }
 
 /* ── credits ────────────────────────────────────────────────────────────────────────────────────────────────────────── */
-export const creditLine = (r) => (r.credit && r.credit.trim() ? r.credit.trim() : `"${r.title}"${r.artist ? ` by ${r.artist}` : ''}, from Uppbeat${r.url ? ` (${r.url})` : ''}`);
+export const creditLine = (r) => (r.credit && r.credit.trim() ? r.credit.trim() : [`"${r.title}"${r.artist ? ` by ${r.artist}` : ''}`, r.source ? `from ${r.source[0].toUpperCase()}${r.source.slice(1)}` : '', r.url ? `(${r.url})` : ''].filter(Boolean).join(', ').replace(', (', ' ('));
 // the assets of a video that need a credit: everything but a LUT (a grade is not shown or heard as someone's work)
 export function creditsOf(root, videoDir) {
   const reg = loadRegister(root), seen = new Set(), out = [];
@@ -276,7 +276,7 @@ export function creditsBlock(records) {
 // text with its credits block replaced (or added at the end, or removed when there is nothing to credit); the block is its
 // heading line and the "- " lines after it
 export function withCredits(text, block) {
-  const lines = String(text).replace(/\s+$/, '').split('\n');
+  const lines = String(text).replace(/\s+$/, '').split(/\r?\n/);
   const at = lines.findIndex((l) => l.trim() === CREDITS_HEADING);
   let head = lines;
   if (at >= 0) { let end = at + 1; while (end < lines.length && lines[end].startsWith('- ')) end++; head = [...lines.slice(0, at), ...lines.slice(end)]; }
@@ -317,9 +317,9 @@ export function cli(loose, flags, cwd = process.cwd()) {
   const text = (k) => (typeof flags[k] === 'string' ? flags[k] : '');
   switch (sub) {
     case 'add': {
-      const root = rootFor(), rec = addAsset(root, a1 ? path.resolve(cwd, a1) : null, { type: text('type'), title: text('title'), artist: text('artist'), url: text('url'), channels: text('channels'), credit: text('credit'), id: text('id'), notes: text('notes'), licence: text('licence'), move: Boolean(flags.move) });
+      const root = rootFor(), rec = addAsset(root, a1 ? path.resolve(cwd, a1) : null, { type: text('type'), title: text('title'), artist: text('artist'), url: text('url'), channels: text('channels'), credit: text('credit'), id: text('id'), notes: text('notes'), licence: text('licence'), source: text('source'), plan: text('plan'), move: Boolean(flags.move) });
       console.log(`recorded ${rec.id} (${rec.type}): ${rec.file}\n  sha256 ${rec.sha256.slice(0, 16)}...`);
-      if (!rec.channels.length) console.log(`note: channels is empty. In Uppbeat (Account, Safelist) safelist this channel for the YouTube upload, then record it:  video licensed channels ${rec.id} ${channelSlug(root) || '<channel slug>'}`);
+      if (!rec.channels.length) console.log(`note: channels is empty. If your source has a safelist (Uppbeat: Account, Safelist), safelist this channel for the YouTube upload, then record it:  video licensed channels ${rec.id} ${channelSlug(root) || '<channel slug>'}`);
       return;
     }
     case 'list': {

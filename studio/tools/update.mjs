@@ -85,8 +85,8 @@ export function gitState(kit, { fetch = true, run = defaultRun } = {}) {
   const top = g('rev-parse', '--show-toplevel');
   if (top.status !== 0 || fs.realpathSync(top.stdout) !== fs.realpathSync(kit)) return { git: false, why: 'this folder is not a git clone (for example a downloaded ZIP), so there is nothing to pull: download the newest kit and install from it, or clone it with git' };
   const branch = g('rev-parse', '--abbrev-ref', 'HEAD').stdout;
-  const remotes = g('remote').stdout.split('\n').filter(Boolean), remote = remotes.includes('origin') ? 'origin' : remotes[0] || null;
-  const dirty = g('status', '--porcelain', '--untracked-files=no').stdout.split('\n').filter(Boolean);
+  const remotes = g('remote').stdout.split(/\r?\n/).filter(Boolean), remote = remotes.includes('origin') ? 'origin' : remotes[0] || null;
+  const dirty = g('status', '--porcelain', '--untracked-files=no').stdout.split(/\r?\n/).filter(Boolean);
   const out = { git: true, branch, remote, dirty, fetched: false, head: g('rev-parse', '--short', 'HEAD').stdout };
   if (!remote) return { ...out, why: 'the clone has no git remote, so it cannot be compared with anything' };
   if (fetch) {
@@ -108,7 +108,7 @@ export function gitState(kit, { fetch = true, run = defaultRun } = {}) {
 // the files of one ref as they are in git, written to a new temporary folder (to show a dry run what a pull would bring)
 export function exportRef(kit, ref, run = defaultRun) {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'video-kit-ref-'));
-  const names = run(kit, ['ls-tree', '-r', '--name-only', ref]).stdout.split('\n').filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || f.startsWith('template/'));
+  const names = run(kit, ['ls-tree', '-r', '--name-only', ref]).stdout.split(/\r?\n/).filter((f) => f === 'VERSION' || f === 'CHANGELOG.md' || f.startsWith('template/'));
   for (const f of names) {
     const r = spawnSync('git', ['show', `${ref}:${f}`], { cwd: kit, maxBuffer: 1 << 28 });
     if (r.status !== 0) continue;
@@ -147,8 +147,8 @@ export function planTemplate(kit, channel) {
     if (rel === BUILD_FILE || rel === 'CLAUDE.local.md' || rel.startsWith('videos/')) continue;
     const src = path.join(t, rel), dst = path.join(channel, rel), has = fs.existsSync(dst);
     if (rel === '.gitignore') {
-      const have = new Set(readText(dst).split('\n').map((l) => l.trim()));
-      plan.gitignore = readText(src).split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !have.has(l));
+      const have = new Set(readText(dst).split(/\r?\n/).map((l) => l.trim()));
+      plan.gitignore = readText(src).split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#') && !have.has(l));
     } else if (rel === 'brand/brand.json') {
       if (!has) { plan.add.push(rel); continue; }
       const mine = readJSON(dst, null), theirs = readJSON(src, {});
@@ -188,7 +188,7 @@ export function isChannel(dir, kit = null) {
 
 // the entries of CHANGELOG.md newer than a version (or just the newest one), trimmed
 export function changelogSince(kit, since, maxLines = 24) {
-  const lines = readText(path.join(kit, 'CHANGELOG.md')).split('\n'), heads = [];
+  const lines = readText(path.join(kit, 'CHANGELOG.md')).split(/\r?\n/), heads = [];
   lines.forEach((l, i) => { const m = /^## (\d+\.\d+\.\d+)/.exec(l); if (m) heads.push({ v: m[1], i }); });
   const pick = heads.filter((h, k) => (since ? newer(h.v, since) || (k === 0 && h.v === since) : k === 0));
   return pick.map((h) => { const next = heads.find((x) => x.i > h.i)?.i ?? lines.length; const body = lines.slice(h.i, next).filter((l) => l.trim()); return body.slice(0, maxLines).join('\n') + (body.length > maxLines ? `\n  ... (${body.length - maxLines} more lines in CHANGELOG.md)` : ''); });
@@ -285,7 +285,7 @@ export async function update(o = {}) {
     log(`   done. ${r.backups.length ? `${r.backups.length} old file${r.backups.length === 1 ? '' : 's'} kept as .bak-${(o.stamp || stampNow()).slice(0, 8)}...: if you changed ${plan.replace.includes('CLAUDE.md') ? 'CLAUDE.md or ' : ''}a skill for this channel only, move that change into CLAUDE.local.md (updates never touch it).` : 'no file needed a backup.'}`);
     const needs = [];
     if (plan.replace.some((x) => x.startsWith('.claude/skills/')) || plan.add.some((x) => x.startsWith('.claude/skills/'))) needs.push('restart Claude Code in this folder so the new skills load');
-    if (plan.add.some((x) => x.startsWith('brand/licensed/'))) needs.push('licensed material (Uppbeat) now has its place: brand/licensed/README.md says how to download by hand and record it (video licensed add ...)');
+    if (plan.add.some((x) => x.startsWith('brand/licensed/'))) needs.push('licensed material (from any source you have rights to) now has its place: brand/licensed/README.md says how to download by hand and record it (video licensed add ...)');
     if (plan.settings.length) needs.push(`check the new setting${plan.settings.length === 1 ? '' : 's'} in brand/brand.json (${plan.settings.join(', ')}); /channel-setup asks about them`);
     if (plan.gitignore.length) needs.push('nothing: .gitignore now also keeps the new kinds of files out of git');
     entry.needs = needs;

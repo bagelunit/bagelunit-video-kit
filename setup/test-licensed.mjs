@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import * as L from '../studio/tools/licensed.mjs';
 import * as scenes from '../studio/tools/scenes.mjs';
@@ -58,7 +58,7 @@ await test('git ignores licensed media but keeps assets.json, the README and .gi
 
 await test('add copies the file into brand/licensed/<type>/, hashes it and records it; list and remove work', () => {
   const root = channel(), src = download('Clear Skies.wav', 'bytes of a track');
-  const rec = L.addAsset(root, src, { type: 'music', title: 'Clear Skies', artist: 'A. Writer', url: 'https://uppbeat.io/x', channels: 'quark-street, other', credit: '' });
+  const rec = L.addAsset(root, src, { type: 'music', title: 'Clear Skies', artist: 'A. Writer', url: 'https://uppbeat.io/x', source: 'uppbeat', plan: 'business', channels: 'quark-street, other', credit: '' });
   assert.equal(rec.id, 'clear-skies'); assert.equal(rec.file, 'brand/licensed/music/clear-skies.wav'); assert.equal(rec.source, 'uppbeat'); assert.equal(rec.plan, 'business');
   assert.deepEqual(rec.channels, ['quark-street', 'other']);
   assert.ok(fs.existsSync(path.join(root, rec.file)) && fs.existsSync(src), 'copied, the download stays');
@@ -80,7 +80,9 @@ await test('add refuses a missing file, a duplicate id, a wrong type or extensio
   assert.throws(() => L.addAsset(root, src, { type: 'stock-video', title: 'x' }), /should be/);
   assert.throws(() => L.addAsset(root, src, { type: 'music' }), /--title/);
   assert.throws(() => L.addAsset(root, src, { type: 'music', title: 'x', id: '../../evil' }), /lowercase/);
-  L.addAsset(root, src, { type: 'music', title: 'Dup' });
+  const bare = L.addAsset(root, src, { type: 'music', title: 'Dup' });
+  assert.equal(bare.source, ''); assert.equal(bare.plan, '', 'no source or plan is assumed');
+  assert.equal(L.creditLine(bare), '"Dup"'); assert.equal(L.creditLine({ title: 'T', artist: 'A', url: 'https://x.example/t' }), '"T" by A (https://x.example/t)');
   assert.throws(() => L.addAsset(root, download('b.wav'), { type: 'music', title: 'Dup' }), /already an asset with the id "dup"/);
   assert.equal(L.listAssets(root).length, 1, 'the refused one left no record');
   fs.mkdirSync(path.join(root, 'brand', 'licensed', 'sfx'), { recursive: true }); fs.writeFileSync(path.join(root, 'brand', 'licensed', 'sfx', 'taken.wav'), 'someone else');
@@ -235,7 +237,7 @@ await test('video approve final refuses while the licensed check fails, then rec
   const root = channel(), vid = finalFolder(root, 'gate', { music: [{ asset: 'clear-skies' }] });
   checks.recordFacts(vid, { scope: 'final', result: 'PASS', cfg: { no_research: 'a test' } });
   assert.throws(() => checks.approve(vid, 'final'), /licensed assets: not cleared[\s\S]*not in brand\/licensed\/assets\.json/);
-  L.addAsset(root, download('a.wav', 'a track'), { type: 'music', title: 'Clear Skies', artist: 'A. Writer', url: 'https://uppbeat.io/t/1', channels: 'other-channel' });
+  L.addAsset(root, download('a.wav', 'a track'), { type: 'music', title: 'Clear Skies', artist: 'A. Writer', url: 'https://uppbeat.io/t/1', source: 'uppbeat', channels: 'other-channel' });
   assert.throws(() => checks.approve(vid, 'final'), /not in its channels/);
   L.setChannels(root, 'clear-skies', 'quark-street');
   assert.throws(() => checks.approve(vid, 'final'), /credits block .* video licensed credits/);
@@ -382,13 +384,13 @@ else {
 
   await test('the vertical (Instagram) render refuses licensed clips and overlays, and a "vertical" override clears them', () => {
     const root = channel(), vid = useInVideo(root, 'vert', { style: styleId, look: { lut: 'x' }, music: [{ asset: 'y' }] }, { scenes: [{ clip: { asset: 'stock' }, narration: 'One two three.' }] });
-    const script = (extra) => `const s = await import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'scenes.mjs').replace(/\\/g, '/'))}); s.setShape('vertical'); try { await s.renderScenes({ dir: ${JSON.stringify(vid.replace(/\\/g, '/'))}, cfg: JSON.parse(${JSON.stringify(JSON.stringify({ style: styleId }))}) }, {}); console.log('RENDERED'); } catch (e) { console.log('ERROR ' + e.message); }`;
+    const script = (extra) => `const s = await import(${JSON.stringify(pathToFileURL(path.join(REPO, 'studio', 'tools', 'scenes.mjs')).href)}); s.setShape('vertical'); try { await s.renderScenes({ dir: ${JSON.stringify(vid.replace(/\\/g, '/'))}, cfg: JSON.parse(${JSON.stringify(JSON.stringify({ style: styleId }))}) }, {}); console.log('RENDERED'); } catch (e) { console.log('ERROR ' + e.message); }`;
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', script()], { encoding: 'utf8' });
     assert.match(r.stdout, /ERROR scene 1 uses licensed material .* YouTube only.*"clip": null/);
     const planned = (scene) => { fs.writeFileSync(path.join(vid, 'scenes.json'), JSON.stringify({ scenes: [scene] })); return scenes.planOf(vid, styleId).scenes[0]; };
     assert.ok(planned({ clip: { asset: 'stock' }, narration: 'x' }).clip, 'wide keeps the clip');
     planned({ clip: { asset: 'stock' }, overlay: { asset: 'leak' }, vertical: { clip: null, overlay: null, template: tpl, props: {} }, narration: 'x' });
-    const probeV = `const s = await import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'scenes.mjs').replace(/\\/g, '/'))}); s.setShape('vertical'); const p = s.planOf(${JSON.stringify(vid.replace(/\\/g, '/'))}, ${JSON.stringify(styleId)}).scenes[0]; console.log(JSON.stringify({ template: p.template, clip: p.clip || null, overlays: p.overlays || null }));`;
+    const probeV = `const s = await import(${JSON.stringify(pathToFileURL(path.join(REPO, 'studio', 'tools', 'scenes.mjs')).href)}); s.setShape('vertical'); const p = s.planOf(${JSON.stringify(vid.replace(/\\/g, '/'))}, ${JSON.stringify(styleId)}).scenes[0]; console.log(JSON.stringify({ template: p.template, clip: p.clip || null, overlays: p.overlays || null }));`;
     const o = spawnSync(process.execPath, ['--input-type=module', '-e', probeV], { encoding: 'utf8' });
     assert.deepEqual(JSON.parse(o.stdout.trim().split('\n').pop()), { template: tpl, clip: null, overlays: null });
   });

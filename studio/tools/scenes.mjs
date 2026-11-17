@@ -670,7 +670,7 @@ export async function renderScenes(reel, { only = null, force = false } = {}) {
   const look = vertical ? null : lookOf(reel.cfg);              // so does a wrong "look"
   const prep = prepare(reel);
   const root = licensed.channelRoot(reel.dir);
-  // Uppbeat material is for YouTube only: the vertical (Instagram) version carries none of it
+  // licensed material is for YouTube only: the vertical (Instagram) version carries none of it
   if (vertical) {
     const s = prep.scenes.find((x) => x.clip || x.overlays?.length);
     if (s) throw new Error(`scene ${s.n} uses licensed material (stock video or an overlay), which is for YouTube only. For the vertical version give that scene a "vertical" override without it, for example {"vertical": {"clip": null, "template": "<id>", "props": {...}, "narration": "..."}} (use "overlay": null to drop an overlay), or remove it`);

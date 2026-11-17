@@ -1,6 +1,6 @@
-# Licensed material (Uppbeat)
+# Licensed material
 
-The one outside source this channel uses for music, sound effects, stock video, motion graphics and LUTs is **Uppbeat** (uppbeat.io, Business plan). Everything else on screen is original. The kit ships no asset files and never downloads any: you download from Uppbeat by hand (it has no API) and the kit records and uses what you downloaded.
+Music, sound effects, stock video, motion graphics and LUTs can come from any source you have the rights to use. **Uppbeat** (uppbeat.io, Business plan) is the one we use and suggest, but it is only a suggestion. Everything else on screen is original. The kit ships no asset files and never downloads any: you download each one by hand from wherever you license it, and the kit records and uses what you downloaded.
 
 ## What is here
 
@@ -11,11 +11,11 @@ The one outside source this channel uses for music, sound effects, stock video, 
 
 ## Downloading and recording an asset
 
-1. On uppbeat.io, open the track, effect, clip, motion graphic or LUT. For music and sound effects choose the **WAV** download.
-2. In Uppbeat, open **Account**, then **Safelist**, and add this channel's YouTube channel. Do this before the first upload; the safelist is what keeps YouTube from flagging the music. Licensed material is for **YouTube only** here (not Instagram, TikTok or anything else).
+1. On the site you license it from (for example uppbeat.io), open the track, effect, clip, motion graphic or LUT and download it. For music and sound effects choose **WAV** if the site offers it.
+2. If your source has a safelist (in Uppbeat: **Account**, then **Safelist**), add this channel's YouTube channel. Do this before the first upload; the safelist is what keeps YouTube from flagging the music. Licensed material is for **YouTube only** here (not Instagram, TikTok or anything else).
 3. Record it from this folder (the file stays where you downloaded it unless you add `--move`):
 
-   `video licensed add ~/Downloads/clear-skies.wav --type music --title "Clear Skies" --artist "Some Artist" --url "https://uppbeat.io/track/..." --channels <this channel's slug>`
+   `video licensed add ~/Downloads/clear-skies.wav --type music --title "Clear Skies" --artist "Some Artist" --url "https://uppbeat.io/track/..." --source uppbeat --plan business --channels <this channel's slug>`
 
    It copies the file into `brand/licensed/music/`, works out its sha256, and writes the record. It refuses a missing file and an id that is already used. For a LUT it checks the file is a real `.cube`.
 4. `video licensed list` shows what is recorded; `video licensed check` checks every file and hash; `video licensed channels <id> a,b` changes which channels are safelisted; `video licensed remove <id>` removes a record and its file.

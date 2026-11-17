@@ -27,7 +27,7 @@
 //   node video.mjs review <channel folder> <export.csv ...>   a channel review from YouTube Studio CSV exports: reviews/<date>.md
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
-//   node video.mjs licensed <add|list|check|channels|credits|remove> ...  the channel's licensed assets (Uppbeat), licensed.mjs
+//   node video.mjs licensed <add|list|check|channels|credits|remove> ...  the channel's licensed assets (any source; Uppbeat suggested), licensed.mjs
 //   node video.mjs update [--apply] [--kit <dir>] [--channel <dir>] [--no-fetch]  the kit and this channel folder to the newest build, update.mjs
 //   node video.mjs youtube <login|upload|captions> ...     youtube.mjs
 import { spawnSync } from 'node:child_process';

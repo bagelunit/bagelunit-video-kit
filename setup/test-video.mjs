@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { chunkScript, chapterLines, stamp } from '../studio/tools/video.mjs';
 import * as yt from '../studio/tools/youtube.mjs';
@@ -1032,7 +1032,7 @@ await test('sources: Wayback keeps a recent snapshot, sends the rest to Save Pag
 await test('video sources: exit code 1 when a DOI fails (no network: --no-archive and an offline Crossref)', () => {
   const d = sourceFolder('10.1000/nope'); fs.writeFileSync(path.join(d, 'video.json'), JSON.stringify({ style: scenes.sceneStyleIds()[0] }));
   const stub = path.join(tmp(), 'offline.mjs');
-  fs.writeFileSync(stub, `globalThis.fetch = async () => ({ status: 404, ok: false, headers: { get: () => null }, json: async () => ({}) });\nprocess.argv.splice(1, 1, ${JSON.stringify(path.join(REPO, 'studio', 'tools', 'video.mjs'))});\nawait import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'video.mjs'))});\n`);
+  fs.writeFileSync(stub, `globalThis.fetch = async () => ({ status: 404, ok: false, headers: { get: () => null }, json: async () => ({}) });\nprocess.argv.splice(1, 1, ${JSON.stringify(path.join(REPO, 'studio', 'tools', 'video.mjs'))});\nawait import(${JSON.stringify(pathToFileURL(path.join(REPO, 'studio', 'tools', 'video.mjs')).href)});\n`);
   const r = spawnSync(process.execPath, [stub, 'sources', d, '--no-archive'], { encoding: 'utf8' });
   assert.equal(r.status, 1, r.stdout + r.stderr); assert.match(r.stdout, /DOI FAIL  10\.1000\/nope/);
 });
@@ -1093,7 +1093,7 @@ await test('nightly-backup template is a bash script that refuses without a dest
 });
 
 await test('vertical safe zone is the Reel Kit\'s: top 250, bottom 300, left 60, right 120 (wide stays 5%)', () => {
-  const code = `const s = await import(${JSON.stringify(path.join(REPO, 'studio', 'tools', 'scenes.mjs').replace(/\\/g, '/'))}); const wide = s.safeBox(); s.setShape('vertical'); console.log(JSON.stringify({ wide, vertical: s.safeBox() }));`;
+  const code = `const s = await import(${JSON.stringify(pathToFileURL(path.join(REPO, 'studio', 'tools', 'scenes.mjs')).href)}); const wide = s.safeBox(); s.setShape('vertical'); console.log(JSON.stringify({ wide, vertical: s.safeBox() }));`;
   const r = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const o = JSON.parse(r.stdout.trim().split('\n').pop());

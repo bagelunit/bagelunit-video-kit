@@ -11,7 +11,7 @@ Below, `video <command>` is short for `node ~/.claude/skills/bagelunit-video/too
 | A Mac, Windows or Linux computer with [Claude Code](https://claude.com/claude-code) | Claude runs every step | your Claude plan |
 | [Node.js](https://nodejs.org) 22 or newer, and ffmpeg | the commands and the video files | free |
 | The [BagelUnit Reel Kit](https://github.com/bagelunit/bagelunit-reel-kit), installed | the voice tool, the headless browser that draws the scenes, the fonts and the sound effects | free |
-| An [ElevenLabs](https://elevenlabs.io) account with a key | the voice | about 900 characters per minute of video (section 8) |
+| An [ElevenLabs](https://elevenlabs.io) account with a key (our suggested voice service; other providers can be connected) | the voice | about 900 characters per minute of video (section 8) |
 | A YouTube channel and its Google account (optional) | uploading from this computer | free |
 | Chrome (or Edge, Brave, Arc, Vivaldi, Opera) with Claude in Chrome (optional) | Claude does the web steps in your browser | free |
 
@@ -110,13 +110,13 @@ Do the steps in this order. Publishing (step 4) before anyone signs in (step 7) 
 
 `video archive <video> --to gdrive:Videos` copies the finished files, the text and the voice you paid for with [rclone](https://rclone.org/install/) (install it and run `rclone config` once, yourself; the kit never asks for or stores a key), then compares checksums and writes `archive.json`. `video tidy` warns when an episode has no such record. To back everything up every night, `scripts/nightly-backup.sh` in the channel folder runs it for every video; it is a template that is not scheduled: set `BAGELUNIT_BACKUP_TO`, try it once by hand, then schedule it with cron, launchd or Task Scheduler if you want.
 
-## 6c. Licensed assets from Uppbeat
+## 6c. Licensed assets
 
-Music, sound effects, stock video, motion graphics and LUTs may come from **Uppbeat** (uppbeat.io, Business plan) and nowhere else. The kit ships none of them and has no way to download them (Uppbeat has no API): you download by hand, the kit records and uses what you downloaded. **YouTube only:** the vertical Instagram version carries none of it.
+Music, sound effects, stock video, motion graphics and LUTs may come from any source you have the rights to use. **Uppbeat** (uppbeat.io, Business plan) is the one we use and suggest, but it is only a suggestion. The kit ships none of them and has no way to download them (Uppbeat has no API): you download by hand, the kit records and uses what you downloaded. **YouTube only:** the vertical Instagram version carries none of it.
 
-1. On uppbeat.io open the track, effect, clip or LUT and download it. For music and sound effects choose the **WAV** download.
-2. In Uppbeat open **Account**, then **Safelist**, and add this channel's YouTube channel (do it before the first upload, or YouTube may flag the music).
-3. In the channel folder: `video licensed add ~/Downloads/clear-skies.wav --type music --title "Clear Skies" --artist "..." --url "https://uppbeat.io/track/..." --channels <channel slug>`. It copies the file into `brand/licensed/music/`, records its sha256 in `brand/licensed/assets.json` and refuses a missing file or an id already used. A LUT must be a real `.cube`. `video licensed list` and `video licensed check [<video>]` show and check them; `video licensed channels <id> a,b` changes the safelisted channels; `video licensed remove <id>` takes one out.
+1. On the site you license it from (for example uppbeat.io) open the track, effect, clip or LUT and download it. For music and sound effects choose **WAV** if the site offers it.
+2. If your source has a safelist (Uppbeat: **Account**, then **Safelist**), add this channel's YouTube channel (do it before the first upload, or YouTube may flag the music).
+3. In the channel folder: `video licensed add ~/Downloads/clear-skies.wav --type music --title "Clear Skies" --artist "..." --url "https://uppbeat.io/track/..." --source uppbeat --plan business --channels <channel slug>`. It copies the file into `brand/licensed/music/`, records its sha256 in `brand/licensed/assets.json` and refuses a missing file or an id already used. A LUT must be a real `.cube`. `video licensed list` and `video licensed check [<video>]` show and check them; `video licensed channels <id> a,b` changes the safelisted channels; `video licensed remove <id>` takes one out.
 4. Use it by id in a video (`brand/licensed/README.md` has the exact settings): `"music": [{"asset": "clear-skies", "from": "intro", "fade": 2, "gain_db": -18}]`, `"look": {"lut": "warm-film", "strength": 0.6}`, a scene `{"clip": {"asset": "city-aerial", "start": 4, "duration": 6}, "narration": "..."}` for a stock cutaway, or an `"overlay": {"asset": "dust", "blend": "screen", "opacity": 0.6, "at": 1.5}` on any scene.
 5. Before the final approval write the credits: `video licensed credits <video>` adds a "Music and assets" block to `out/youtube.txt`. `video approve <video> final` refuses while `video licensed check` fails (an asset not recorded, a file or hash that changed, the channel not in its `channels`, or the credits missing) and records the list with the credits.
 
