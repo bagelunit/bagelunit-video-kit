@@ -73,6 +73,9 @@ export function findKit({ kit = null, engine = defaultEngine(), home = os.homedi
   return { error: 'cannot find the kit folder. Give it with  video update --kit <folder>  (the clone of bagelunit-video-kit that you installed from), or clone it again: git clone https://github.com/bagelunit/bagelunit-video-kit ~/dev/bagelunit-video-kit' };
 }
 
+// The same folder, however it is spelled: Windows may give a short name (RUNNER~1) or other letter case, and git prints forward slashes.
+const real = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+export const samePlace = (a, b) => { const x = real(a), y = real(b); return process.platform === 'win32' ? x.toLowerCase() === y.toLowerCase() : x === y; };
 /* ── git ────────────────────────────────────────────────────────────────────────────────────────────────────────────── */
 export const defaultRun = (cwd, args) => {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
@@ -83,7 +86,7 @@ export const defaultRun = (cwd, args) => {
 export function gitState(kit, { fetch = true, run = defaultRun } = {}) {
   const g = (...a) => run(kit, a);
   const top = g('rev-parse', '--show-toplevel');
-  if (top.status !== 0 || fs.realpathSync(top.stdout) !== fs.realpathSync(kit)) return { git: false, why: 'this folder is not a git clone (for example a downloaded ZIP), so there is nothing to pull: download the newest kit and install from it, or clone it with git' };
+  if (top.status !== 0 || !samePlace(top.stdout, kit)) return { git: false, why: 'this folder is not a git clone (for example a downloaded ZIP), so there is nothing to pull: download the newest kit and install from it, or clone it with git' };
   const branch = g('rev-parse', '--abbrev-ref', 'HEAD').stdout;
   const remotes = g('remote').stdout.split(/\r?\n/).filter(Boolean), remote = remotes.includes('origin') ? 'origin' : remotes[0] || null;
   const dirty = g('status', '--porcelain', '--untracked-files=no').stdout.split(/\r?\n/).filter(Boolean);
@@ -182,7 +185,7 @@ export function applyTemplate(kit, channel, plan, stamp = stampNow()) {
 }
 export function isChannel(dir, kit = null) {
   if (!dir || !fs.existsSync(path.join(dir, 'brand', 'brand.json'))) return false;
-  if (kit) { const real = fs.realpathSync(dir), k = fs.realpathSync(kit); if (real === k || real.startsWith(k + path.sep)) return false; }   // never the kit's own template/
+  if (kit) { const r = real(dir), k = real(kit); if (r === k || r.startsWith(k + path.sep)) return false; }   // never the kit's own template/
   return true;
 }
 

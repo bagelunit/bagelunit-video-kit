@@ -19,7 +19,7 @@ const hasGit = spawnSync('git', ['--version']).status === 0;
 let n = 0;
 const test = async (name, fn) => { try { await fn(); n++; console.log(`ok   ${name}`); } catch (e) { console.error(`FAIL ${name}\n  ${e.stack || e}`); process.exitCode = 1; } };
 if (!hasGit) { console.log('SKIPPED update tests: git is not installed'); process.exit(0); }
-const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'video-update-test-')));
+const tmp = () => fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'video-update-test-')));
 const git = (cwd, ...a) => { const r = spawnSync('git', a, { cwd, encoding: 'utf8' }); assert.equal(r.status, 0, `git ${a.join(' ')}: ${r.stderr}`); return r.stdout.trim(); };
 const put = (root, files) => { for (const [f, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(root, f)), { recursive: true }); fs.writeFileSync(path.join(root, f), text); } };
 
