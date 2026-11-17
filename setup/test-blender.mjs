@@ -257,7 +257,7 @@ await test('the template ships the Blender library, keeps renders out of git, an
   const bb = fs.readFileSync(path.join(D3, 'lib', 'bb.py'), 'utf8');
   for (const fn of ['rgba', 'setup', 'mat', 'mat_image', 'rounded_box', 'cylinder', 'plane', 'text3d', 'import_model', 'blob_shadow', 'studio_lights', 'camera', 'orbit', 'push_in', 'render', 'terrain_shaded_relief']) assert.match(bb, new RegExp(`^def ${fn}\\(`, 'm'), fn);
   assert.ok(fs.existsSync(path.join(TEMPLATE, '.claude', 'skills', 'blender-shot', 'SKILL.md')));
-  const skill = fs.readFileSync(path.join(TEMPLATE, '.claude', 'skills', 'blender-shot', 'SKILL.md'), 'utf8');
+  const skill = fs.readFileSync(path.join(TEMPLATE, '.claude', 'skills', 'blender-shot', 'SKILL.md'), 'utf8').replace(/\r\n/g, '\n');   // a Windows checkout may have CRLF
   assert.match(skill, /^---\nname: blender-shot\n/); assert.match(skill, /claude mcp list/); assert.match(skill, /Inputs:.*Outputs:.*Next step:/s);
   assert.match(fs.readFileSync(path.join(TEMPLATE, 'CLAUDE.md'), 'utf8'), /\/blender-shot/);
   assert.match(fs.readFileSync(path.join(REPO, 'COMMANDS.md'), 'utf8'), /\/blender-shot/);
