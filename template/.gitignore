@@ -14,3 +14,5 @@ videos/*/assets/blender/
 brand/.tips.json
 __pycache__/
 *.pyc
+# raw dumps of a competitor read (video competitors sync --save-raw); the text research next to it is kept
+brand/research/youtube/raw/

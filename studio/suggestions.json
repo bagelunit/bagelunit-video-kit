@@ -228,7 +228,7 @@
         {
           "id": "apify",
           "name": "Apify",
-          "what_you_get": "A pay-as-you-go scraping platform. Saved once as a token, it lets the kit read other YouTube channels' public video lists (titles, views, publish dates) so you can track competitors and see which topics work for them. The Reel Kit already uses the same token to read Instagram accounts; a YouTube competitor tracker for this kit builds on it.",
+          "what_you_get": "A pay-as-you-go scraping platform. Saved once as a token, it lets the kit read other YouTube channels' public video lists (titles, views, publish dates) so you can track competitors and see which topics work for them. The Reel Kit already uses the same token to read Instagram accounts; `video competitors` (the `/competitors` skill) reads other channels' public video lists with it, and also works from an export file with no Apify at all.",
           "example": "the last 30 videos of five rival channels: which ones beat that channel's own median views, and what their titles and thumbnails have in common, to feed your next outline",
           "kind": "key",
           "detect": {

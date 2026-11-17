@@ -97,6 +97,19 @@ function comingUp(M) {
   return `<ol class="agenda">${[...future, ...past].map(row).join('')}</ol>`;
 }
 
+function competitorsCard(M) {
+  const c = M.competitors;
+  if (!c) return '';
+  const top = c.top.length
+    ? `<ol class="agenda">${c.top.map((v) => `<li><div class="when"><span>${v.multiple.toFixed(1)}x median</span><b>${esc(fmt(v.views))} views</b></div><div class="ag"><a href="${esc(/^https?:\/\//.test(v.url) ? v.url : '#')}" rel="noopener">${esc(v.title)}</a><em>@${esc(v.handle)}</em></div></li>`).join('')}</ol>`
+    : `<p class="empty">${esc(c.caveat || 'No outliers yet: a channel needs at least 10 saved videos before one counts.')}</p>`;
+  return `<section class="wrap" id="competitors" aria-labelledby="comp-title">
+<div class="sec-head" data-reveal><div>${label('eye', 'Competitors')}<h2 id="comp-title" class="sr">Competitors</h2></div><span class="aside">${c.channels} channel${c.channels === 1 ? '' : 's'} tracked${c.pulled ? ` · last pull ${esc(c.pulled)}` : ' · not pulled yet'}</span></div>
+<div data-reveal>${top}<p class="aside">Outliers are videos at 3x their own channel's median views; dates are approximate. ${c.href ? `<a class="rev" href="${esc(encodeURI(c.href))}">The full report (outliers.md)</a>` : 'Run <code>video competitors report</code> for the full report.'}</p></div>
+</section>
+`;
+}
+
 function band(M) {
   const nodes = M.steps.map((s, i) => `<li class="node${s.count ? ' live' : ''}${s.who === 'you' ? ' yours' : ''}" style="--i:${i}" data-step="${s.key}"><span class="nic">${icon(STEP_ICON[s.key])}</span><span class="nname">${esc(s.name)}</span><b class="ncount" data-count="${s.count}">${s.count}</b><span class="nwho">${s.who === 'you' ? 'Your yes' : s.who === 'claude' ? 'Claude' : 'Done'}</span></li>`).join('');
   return `<section class="band" id="work" aria-labelledby="work-title"><div class="wrap">
@@ -356,6 +369,8 @@ ${strip(M)}</header>
 </section>
 
 ${band(M)}
+
+${competitorsCard(M)}
 
 <section class="wrap" id="videos" aria-labelledby="videos-title">
 <div class="sec-head" data-reveal><div>${label('grid', 'Every video')}<h2 id="videos-title">Your videos</h2></div>

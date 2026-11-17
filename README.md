@@ -6,6 +6,7 @@ Make YouTube videos with Claude Code: give it a topic and it researches it, maps
 - **Researched, with sources.** Every number said or shown must come from the video's research or your cleared facts. A fact check runs before the voice and again before upload.
 - **You approve twice.** Nothing is voiced before you approve the map, and nothing is uploaded before you approve the finished video. Uploads are private until you say otherwise.
 - **One folder per channel.** Run several YouTube channels from one kit, each with its own topic, voice, colours, facts and sign-in.
+- **A competitor tracker** (optional): `video competitors` finds the videos that beat another channel's own median views, what their titles share and ideas for your next outline, from an export file or (paid by you, only after you see the cost and say yes) from Apify.
 - **A dashboard** for each channel: what needs you, every video's step, a calendar, voice credits left, and a card that plays each video.
 - **A script that reads like a person wrote it.** A script check, a cold read, a human score and a score out of 100 come before the voice; the voice refuses a script whose exact words were not reviewed at 90 or more.
 - **Quality checks you can run.** Pace of the picture, the music plan, caption reading speed, the finished mix, the thumbnail, and a fair A/B test for thumbnails, each with its own command.

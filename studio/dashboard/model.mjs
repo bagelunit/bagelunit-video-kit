@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findBrand, researchState } from '../tools/checks.mjs';
 import { latestReview } from '../tools/review.mjs';
+import { dashboardSummary } from '../tools/competitors.mjs';
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
 const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
@@ -160,8 +161,13 @@ export function load(root, { pageDir = root } = {}) {
   // the newest channel review (video review), as a link from the page
   const rv = brand ? latestReview(brand.dir) : null;
   const review = rv ? { date: rv.date, headline: rv.headline, href: path.relative(pageDir, rv.file).split(path.sep).join('/') } : null;
+  // the competitor tracker (video competitors), only when the channel has started one; read from saved files, no network
+  let competitors = null;
+  try { competitors = brand ? dashboardSummary(brand.dir) : null; } catch { competitors = null; }
+  if (competitors?.report) competitors.href = path.relative(pageDir, competitors.report).split(path.sep).join('/');
   return {
     review,
+    competitors,
     root, brand: brand ? { name: brand.cfg.name || path.basename(brand.dir), accent: brand.cfg.colors?.accent || null } : null,
     name: brand ? brand.cfg.name || path.basename(brand.dir) : path.basename(root),
     accent: (brand?.cfg.colors?.accent && /^#[0-9a-f]{3,8}$/i.test(brand.cfg.colors.accent)) ? brand.cfg.colors.accent : '#E4572E',

@@ -40,6 +40,7 @@
 //   node video.mjs suggest [<id>] [--have a,b | --none | --later | --other "text" | --dismiss id | --undismiss id] [--json] [--channel dir]  optional outside tools (never required), what each adds, which are connected, suggest.mjs
 //   node video.mjs licensed <add|list|check|channels|credits|remove> ...  the channel's licensed assets (any source; Uppbeat suggested), licensed.mjs
 //   node video.mjs update [--apply] [--kit <dir>] [--channel <dir>] [--no-fetch]  the kit and this channel folder to the newest build, update.mjs
+//   node video.mjs competitors <add|remove|list|sync|import|report|outliers> ...  track other YouTube channels (optional; Apify is only one way), competitors.mjs
 //   node video.mjs youtube <login|upload|captions> ...     youtube.mjs
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -773,6 +774,13 @@ async function main() {
     case 'suggest': return run(() => suggest.cli(loose.slice(1), flags));
     case 'licensed': return run(async () => { const L = await import('./licensed.mjs'); return L.cli(loose.slice(1), flags); });
     case 'update': return run(async () => { const U = await import('./update.mjs'); return U.cli(flags); });
+    case 'competitors': return run(async () => {
+      const C = await import('./competitors.mjs');
+      const code = await C.cli(process.argv.slice(3));
+      if (code) process.exitCode = code;
+      const b = checks.findBrand(process.cwd());
+      if (b && ['add', 'remove', 'sync', 'import', 'report'].includes(arg) && fs.existsSync(path.join(b.dir, 'videos', PAGE))) await drawDashboard(path.join(b.dir, 'videos'), { quiet: true });
+    });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
     default:
       console.log(fs.readFileSync(fileURLToPath(import.meta.url), 'utf8').split('\n').slice(1).filter((l, i, a) => a.slice(0, i + 1).every((x) => x.startsWith('//'))).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));

@@ -36,6 +36,17 @@
     "banned_phrases": []
   },
   "reels_folder": "",
+  "autopilot": {
+    "_note": "The owner's switch for paid reads of other channels (video competitors sync). Leave false until you agree to Apify's cost; every run still shows the estimate first and needs --yes.",
+    "scrape": false
+  },
+  "research": {
+    "youtube": {
+      "_note": "Apify actor and an ESTIMATED price per video for the cost shown before a read. Check your plan on apify.com; the real price is Apify's.",
+      "actor": "streamers~youtube-scraper",
+      "cost_per_video": 0.004
+    }
+  },
   "tools": {
     "have": [],
     "none": false,

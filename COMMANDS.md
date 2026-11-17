@@ -28,6 +28,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `/generated-shots <what>` | Makes and records an AI-generated shot (a clip or a still, any provider; none is required), then uses it by id in a scene with its label on screen. |
 | `/thumbnail-design [video]` | Takes a thumbnail brief into Canva, Adobe or any editor (or a Blender still), puts it on the video with `video thumbnail --image`, checks it with `video thumbcheck` and sets up YouTube's thumbnail test. |
 | `/suggested-tools` | Shows the optional outside tools (a voice service, licensed music, Blender, a generated-video tool, Canva or Adobe), asks which you have with selectable questions, records the answers, and walks through connecting the ones you have. None is required. Same as `video suggest` below. |
+| `/competitors` | Tracks other YouTube channels: asks which ones, a dry run with the estimated cost, then (only on your yes) reads them with Apify or takes an export file, then the report: outlier videos, title shapes, repeated topics and ideas for the next outline. Apify bills you and is only one way. |
 | `/db` | Redraws and opens the channel's dashboard (`video dashboard --open`) and says what it shows. |
 | `/video-update` | Updates the kit and this channel folder to the newest build: a dry run, your yes, then `video update --apply`. |
 
@@ -88,6 +89,18 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `video suggest --dismiss <id>` / `--undismiss <id>` | Stops (or restarts) the small tips about one tool. |
 
 Tips: at `video new`, `video thumbnail`, `video render`, `video voice` one short `Tip:` line goes to stderr when an outside tool would help and is not connected, not declared and not dismissed: at most one per command, the same tool at most once in 7 days (`brand/.tips.json`). Off with `BAGELUNIT_NO_TIPS=1`, `--no-tips`, or `"tools": {"tips": false}`. A tip never changes the output or the exit code.
+
+## Competitor tracking (optional; Apify is only one way)
+
+| Command | What it does |
+|---|---|
+| `video competitors add <@handle \| channel link> [--tag niche\|adjacent\|big]` | Tracks a channel (`@name`, `youtube.com/@name`, `/channel/UC...` or `/c/name`); up to 30 in `brand/competitors.json`. |
+| `video competitors remove <handle>` | Stops tracking a channel (its saved videos stay). |
+| `video competitors list [--json]` | The tracked channels, their tag, subscribers, videos read and last pull. |
+| `video competitors sync [<handle>] [--max N] [--shorts] [--dry-run] [--yes] [--max-cost USD] [--save-raw]` | A dry run by default: the channels, the estimated videos and cost ("estimated, check your plan on apify.com", from `brand.json` `research.youtube.cost_per_video`) and exactly what would be sent. A real read with Apify needs the token file `~/.config/bagelunit-reels/apify.key`, `autopilot.scrape` true in `brand/brand.json`, `--yes` and an estimate under `--max-cost` (default 1.00). One request per channel; a failed channel is reported and the others carry on; a line goes to `brand/spend.csv`. Never scheduled. |
+| `video competitors import <handle> <file.csv \| file.json>` | Takes a scraper export or a CSV from anywhere (title, views, published and duration under common names); works offline with no Apify. |
+| `video competitors report [--json]` | Median views, outliers (3x the channel's own median, only with 10 or more videos), views a day (approximate), a ranking, title shapes, topics repeated across channels and up to five testable ideas. Writes `brand/research/youtube/outliers.md` and `outliers.json`. |
+| `video competitors outliers [--json]` | Only the outliers, nothing written. |
 
 ## 3D shots (in a channel folder, `brand/library/3d/`; Blender is optional)
 

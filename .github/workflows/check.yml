@@ -50,3 +50,5 @@ jobs:
         run: node setup/test-generated.mjs
       - name: Retention tests (the channel review's retention section)
         run: node setup/test-retention.mjs
+      - name: Competitor tracker tests (stubbed fetch and a fake token: no network, no real key)
+        run: node setup/test-competitors.mjs
