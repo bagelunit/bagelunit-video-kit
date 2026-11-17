@@ -130,6 +130,10 @@ With Blender installed, `/blender-shot` in a channel folder makes a product, pho
 
 `brand/library/3d/terrain.py --bbox SOUTH,WEST,NORTH,EAST --video <name>` makes a shaded-relief map. It downloads the free Terrain Tiles (no key; the one place the kit uses the network, only when you run it, a few tiles at a time, cached in the video folder), writes `ATTRIBUTION.txt` next to the render and prints it: put it in the video description.
 
+## 6e. Optional tools that improve results (all suggested, none required)
+
+The kit renders every video in code, with no outside tool. Some tools make a result better: a natural voice (ElevenLabs), licensed music (Uppbeat, Epidemic Sound), 3D (Blender with the Blender Lab MCP), generated shots (Higgsfield or another tool), and thumbnails and graphics (Canva, Adobe Firefly or Express, the Adobe connector). `/channel-setup` asks once near the end whether to show them; `/suggested-tools` (or `video suggest`) any time. It lists each tool with what it adds and a concrete example, asks with selectable questions which ones you have (or none, or something else you type), records your answers in `brand/brand.json`, and walks through connecting the ones you have. Detection looks only at what is on this computer (a program, a key file that exists, a connector Claude already has); nothing is sent anywhere and a key is never read. At the matching step (`video new`, `video thumbnail`, `video render`, `video voice`) one short `Tip:` line may appear when a tool would help; `video suggest --dismiss <id>`, `--no-tips`, `BAGELUNIT_NO_TIPS=1` or `"tools": {"tips": false}` silences it.
+
 ## 7. Reels from a video (with the Reel Kit)
 
 When the channel is linked to a Reel Kit brand folder (`reels_folder`, asked at setup), `video reels <video>` lists the 20 to 50 second stretches that stand on their own. Pick some and `video reels <video> --pick 3-5,12-14 --apply` makes Reel Kit reel folders from them, in the same style, drawn vertical. In the reels folder, `/bagelunit-reels` gives each one its own hook, voice and approvals. The numbers they use are listed in `facts-from-video.md` for you to clear into that brand's `facts.md`.

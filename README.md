@@ -21,6 +21,8 @@ The vertical reels are made by its sister kit, the [BagelUnit Reel Kit](https://
 3. **Make your first channel:** open Claude Code in this folder and type `/video-setup`.
 4. **Make a video:** open Claude Code in the new channel folder and type `/bagelunit-video` with your topic.
 
+**Nothing outside is required.** The kit draws everything in code. Tools such as ElevenLabs, Uppbeat, Epidemic Sound, Blender, Higgsfield, Canva or Adobe only improve results, and are only suggested: `/suggested-tools` (or `video suggest`) shows what each adds with an example, asks which ones you have, and never sends anything anywhere.
+
 The full guide, with every step, what it costs and how to connect YouTube, is **[SETUP.md](SETUP.md)**. Every command is in **[COMMANDS.md](COMMANDS.md)**.
 
 ## What a video goes through

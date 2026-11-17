@@ -10,5 +10,7 @@ brand/licensed/*/*
 !brand/licensed/*/.gitkeep
 # Blender renders, frames and the terrain tile cache stay on this computer
 videos/*/assets/blender/
+# which optional-tool tips were shown and when (video suggest)
+brand/.tips.json
 __pycache__/
 *.pyc

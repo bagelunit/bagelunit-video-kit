@@ -22,6 +22,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `/bagelunit-video <video name>` | Carries on with a video from its next step. |
 | `/channel-setup` | Sets up or changes the channel: name, topic, YouTube channel, voice, colour, styles, call to action, reels folder. |
 | `/blender-shot <what>` | Makes a 3D shot in Blender (a product, a map, a prop, a title): renders a still, looks at it, renders the clip into `videos/<name>/assets/blender/` and wires it into a scene as your own `"file"` clip or overlay, then `video check`. Blender is free and optional. |
+| `/suggested-tools` | Shows the optional outside tools (a voice service, licensed music, Blender, a generated-video tool, Canva or Adobe), asks which you have with selectable questions, records the answers, and walks through connecting the ones you have. None is required. Same as `video suggest` below. |
 | `/db` | Redraws and opens the channel's dashboard (`video dashboard --open`) and says what it shows. |
 | `/video-update` | Updates the kit and this channel folder to the newest build: a dry run, your yes, then `video update --apply`. |
 
@@ -29,7 +30,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 
 | Command | What it does |
 |---|---|
-| `video doctor` | What is installed and what is missing, with the fix for each. Blender (optional) is reported as a note. |
+| `video doctor` | What is installed and what is missing, with the fix for each. Blender (optional) is reported as a note, and a line says what works without any outside tool and which optional upgrades you could add. |
 | `video styles [<style>]` | The 20 scene styles, or one style's templates. |
 | `video new <name> --style <id> --title "..."` | Starts a video folder (in a channel folder: `videos/<name>`), with an empty research page. |
 | `video facts <video> [--scope script\|final]` | The fact check: every number said or shown must be in research.md or the channel's facts.md. Writes a worksheet to re-read the sources. |
@@ -61,6 +62,17 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `video licensed channels <id> a,b` | Sets which channels are safelisted for an asset (Uppbeat: Account, Safelist; other sources have their own). |
 | `video licensed credits <video>` | Writes (or refreshes) the "Music and assets" credits block at the end of `out/youtube.txt`. |
 | `video licensed remove <id> [--keep-file]` | Removes a record and its file. |
+
+## Optional outside tools (never required)
+
+| Command | What it does |
+|---|---|
+| `video suggest [--json] [--channel <dir>]` | The catalog by category (voice, music and effects, 3D, generated video, design), each tool with its status (connected, not connected, dismissed) and what it adds. Detection looks at what exists on this computer (a program, a key file, a connector in `claude mcp list`) and your answers; no network, nothing sent, a key is never read. |
+| `video suggest <id or category>` | One tool in detail: what you get, a concrete example, how to connect it, its site. |
+| `video suggest --have a,b \| --none \| --later \| --other "text"` | Records your answers in the channel's `brand/brand.json` (`tools`). `--have` replaces the list you have. |
+| `video suggest --dismiss <id>` / `--undismiss <id>` | Stops (or restarts) the small tips about one tool. |
+
+Tips: at `video new`, `video thumbnail`, `video render`, `video voice` one short `Tip:` line goes to stderr when an outside tool would help and is not connected, not declared and not dismissed: at most one per command, the same tool at most once in 7 days (`brand/.tips.json`). Off with `BAGELUNIT_NO_TIPS=1`, `--no-tips`, or `"tools": {"tips": false}`. A tip never changes the output or the exit code.
 
 ## 3D shots (in a channel folder, `brand/library/3d/`; Blender is optional)
 

@@ -27,6 +27,7 @@
 //   node video.mjs review <channel folder> <export.csv ...>   a channel review from YouTube Studio CSV exports: reviews/<date>.md
 //   node video.mjs dashboard [<folder>] [--credits] [--open]  the video dashboard (brand folder: videos/video-dashboard.html)
 //   node video.mjs doctor                                  what is installed and what is missing
+//   node video.mjs suggest [<id>] [--have a,b | --none | --later | --other "text" | --dismiss id | --undismiss id] [--json] [--channel dir]  optional outside tools (never required), what each adds, which are connected, suggest.mjs
 //   node video.mjs licensed <add|list|check|channels|credits|remove> ...  the channel's licensed assets (any source; Uppbeat suggested), licensed.mjs
 //   node video.mjs update [--apply] [--kit <dir>] [--channel <dir>] [--no-fetch]  the kit and this channel folder to the newest build, update.mjs
 //   node video.mjs youtube <login|upload|captions> ...     youtube.mjs
@@ -39,6 +40,8 @@ import * as scenes from './scenes.mjs';
 import * as checks from './checks.mjs';
 import * as licensed from './licensed.mjs';
 import * as blender from './blender.mjs';
+import * as suggest from './suggest.mjs';
+import * as tips from './tips.mjs';
 
 const TOOLS = path.dirname(fileURLToPath(import.meta.url));
 export const REEL_ENGINE = process.env.BAGELUNIT_REEL_ENGINE || path.join(os.homedir(), '.claude', 'skills', 'bagelunit-reels');
@@ -51,6 +54,7 @@ export function parse(argv) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2), next = argv[i + 1];
+      if (k === 'no-tips' || k === 'none' || k === 'later' || k === 'json') { flags[k] = true; continue; }   // plain switches never take the next word
       if (next === undefined || next.startsWith('--')) flags[k] = true; else { flags[k] = next; i++; }
     } else loose.push(a);
   }
@@ -526,6 +530,8 @@ function doctor() {
   // Blender is optional (3D shots in a channel's brand/library/3d): a note, never an error
   const bl = blender.describe();
   console.log(`${bl.ok ? 'ok     ' : 'note   '} ${bl.text}`);
+  // outside tools are suggestions, never requirements (video suggest)
+  for (const l of suggest.doctorLines(suggest.findBrandDir(process.cwd()))) console.log(`note    ${l}`);
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */
@@ -619,6 +625,7 @@ async function main() {
       const file = await drawDashboard(dashboardRoot(arg), { credits: Boolean(flags.credits) });
       if (flags.open) spawnSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [file], { stdio: 'ignore' });
     });
+    case 'suggest': return run(() => suggest.cli(loose.slice(1), flags));
     case 'licensed': return run(async () => { const L = await import('./licensed.mjs'); return L.cli(loose.slice(1), flags); });
     case 'update': return run(async () => { const U = await import('./update.mjs'); return U.cli(flags); });
     case 'youtube': { const m = await import('./youtube.mjs'); return m.cli(process.argv.slice(3)); }
@@ -629,9 +636,14 @@ async function main() {
 }
 const CHANGES = new Set(['new', 'voice', 'revoice', 'stand-in', 'render', 'thumbnail', 'captions', 'facts', 'approve', 'qa', 'tidy', 'sources', 'archive', 'youtube']);
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const { loose } = parse(process.argv.slice(2));
+  const { loose, flags: cliFlags } = parse(process.argv.slice(2));
   Promise.resolve(main()).then(() => {
     const target = loose[0] === 'youtube' ? loose[2] : loose[1];
+    // one optional-tool tip (stderr, never changes the exit code or stdout; tips.mjs has the rules)
+    if (!process.exitCode) {
+      const stage = { new: 'new', thumbnail: 'thumbnail', voice: 'voice' }[loose[0]] || (loose[0] === 'render' && !cliFlags.scene ? 'render' : loose[0] === 'youtube' && loose[1] === 'upload' ? 'upload' : null);
+      if (stage) tips.tip(stage, { dir: stage === 'new' || !target ? process.cwd() : path.resolve(target), flags: cliFlags });
+    }
     if (CHANGES.has(loose[0]) && target) {
       const brand = loose[0] === 'new' ? checks.findBrand(process.cwd()) : null;
       return redrawFor(brand && !/[\\/]/.test(target) ? path.join(brand.dir, 'videos', target) : target);

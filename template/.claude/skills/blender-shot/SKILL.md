@@ -24,7 +24,7 @@ Inputs: the brief and the video folder (`videos/<name>`; `video new` first if th
 `videos/<name>/assets/blender/`, and the scene in `scenes.json` that uses it. Next step: `video check <video>`, then look at the
 stills, then carry on with the video (`/bagelunit-video <video name>`).
 - Blender is optional and free. Find out with `video doctor` (it prints "Blender 4.2 or newer found", or a note with how to get it).
-  If it is missing, say so, give the one command from that note and ask whether to install it; never install it unasked, and the rest
+  If it is missing, say so, give the one command from that note and ask with AskUserQuestion ("Install it now", "Skip the 3D shot (Recommended if unsure)", "I will do it myself"); never install it unasked, and the rest
   of the video does not need it.
 - The tools are in `brand/library/3d/` (read its `README.md`): `blender_shot.py` (runs a shot on any system; `blender_shot.sh` is the bash
   wrapper), `lib/bb.py` (helpers), `shots/product.py`, `shots/phone.py`, `shots/terrain.py` and `terrain.py` (map data).
@@ -33,7 +33,7 @@ stills, then carry on with the video (`/bagelunit-video <video name>`).
 
 ## The flow
 1. **Brief (three lines).** What the shot shows, what it does in the time of its scene (turn, orbit, push in, float, reveal), and the mood
-   (colours from `brand/brand.json`; the helpers read them). Is it a full-frame clip (`"clip"`, an opaque shot with its own background) or an overlay
+   (colours from `brand/brand.json`; the helpers read them). Ask with AskUserQuestion when the scene does not decide it: a full-frame clip (`"clip"`, an opaque shot with its own background) or an overlay
    over a drawn scene (transparent, `"overlay"`)? Wide 1920x1080 by default; `--vertical` for the vertical version.
 2. **Pick or write the shot.** A template if it fits: `shots/product.py` (box or can, optional `--label`), `shots/phone.py` (`--screen`),
    `shots/terrain.py` through `terrain.py` (a place: `--bbox SOUTH,WEST,NORTH,EAST`). Otherwise write `videos/<name>/assets/blender/<shot>.py`

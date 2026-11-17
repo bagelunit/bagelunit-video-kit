@@ -32,6 +32,7 @@ jobs:
         run: |
           node setup/test-licensed.mjs
           node setup/test-update.mjs
+          node setup/test-suggest.mjs
       - name: Blender support tests (own clips, library, terrain with a stubbed fetch; the real Blender part skips without Blender)
         shell: bash
         run: node setup/test-blender.mjs

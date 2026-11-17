@@ -20,6 +20,7 @@ At the start of a session, read `brand/brand.json`. If `"name"` is empty, the ch
 | `videos/<name>/` | one folder per video: research, map, script, scenes, voice, renders, approvals (the work order is the skill's `SKILL.md`) |
 | `brand/licensed/` | licensed material from any source you have rights to (Uppbeat is what we use and suggest): `assets.json` (the register), `README.md` (how to download by hand and record), the files by type |
 | `brand/library/3d/` | the kit's Blender library (`blender_shot.py`, `lib/bb.py`, `shots/`, `terrain.py`; read its `README.md`); `video update` refreshes it. Renders go to `videos/<name>/assets/blender/` (not in git) |
+| `brand/brand.json` `tools` | which optional outside tools the owner has, said no to or dismissed (`/suggested-tools`, `video suggest`); `brand/.tips.json` remembers when a tip was last shown (not in git) |
 | `scripts/nightly-backup.sh` | a backup template (not scheduled): `video archive` on every video to an rclone destination; read its top lines, set `BAGELUNIT_BACKUP_TO` |
 | `videos/video-dashboard.html` | the dashboard (`video dashboard --open`); it redraws itself after every command that changes a video |
 
@@ -30,6 +31,7 @@ Skills in this folder (type the command):
 | `/bagelunit-video <topic>` | makes a video, or carries one on (section 2) |
 | `/channel-setup` | sets up or changes this channel |
 | `/blender-shot <what>` | makes a 3D shot (a product, a map, a prop, a title) in Blender, looks at a still, renders it into the video's `assets/blender/` and wires it in as `"clip": {"file": ...}` or an `overlay`, then `video check` (Blender is optional; `video doctor` says if it is found) |
+| `/suggested-tools` | shows the optional outside tools and what each adds, asks which the owner has (selectable questions), records the answers in `brand/brand.json`, walks through connecting them; none is required (`video suggest`) |
 | `/db` | redraws and opens the dashboard (`video dashboard --open`) |
 | `/video-update` | updates the kit and this folder to the newest build (`video update`, a dry run first, then `--apply`) |
 
@@ -49,7 +51,7 @@ Skills in this folder (type the command):
 
 ## 4. Rules that always stay on
 
-1. Never ask for, print or store a key or a token. The ElevenLabs key is the owner's, in the file the Reel Kit setup made (ElevenLabs is a suggested voice service; other providers can be connected).
+1. Never ask for, print or store a key or a token. **Outside tools are only suggestions, never requirements** (ElevenLabs, Uppbeat, Epidemic Sound, Blender, Higgsfield, Canva, Adobe and others): the kit works on pure code rendering, the owner can connect whatever they like, and you never push one. Offer them with `/suggested-tools` (`video suggest`), once, with selectable questions. The ElevenLabs key is the owner's, in the file the Reel Kit setup made (ElevenLabs is a suggested voice service; other providers can be connected).
 2. Everything on screen is original: no real people, no other companies' logos or characters, no outside footage or music. The one exception is licensed material (music, sound effects, stock video, motion graphics, LUTs) from any source you have the rights to; Uppbeat is the one we use and suggest, not the only one. It goes in only through `brand/licensed/`: the owner downloads it by hand, every asset is recorded (`video licensed add`, with `--source` and `--plan`), the channel is safelisted with the source before a YouTube upload if the source has a safelist (Uppbeat: Account, Safelist), and it is used by id (`brand/licensed/README.md`). Licensed video and overlays decorate; they never carry the story. `video approve ... final` refuses while `video licensed check` fails. Licensed material is for YouTube only. Your own Blender or code renders are different: they are yours, so a scene names them with `"file"` (no record, no credit) and they may carry the story; they stay inside the channel folder.
 3. Report what actually happened: a render with errors is not done, a stand-in voice is not a voice, a fact check that was not re-read is not a PASS.
 4. Anything scored must reach 90 or more; below that, redo and rescore.

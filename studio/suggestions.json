@@ -1,0 +1,193 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "voice",
+      "title": "Voice",
+      "question": "Do you have a voice service for the narration?",
+      "tools": [
+        {
+          "id": "elevenlabs",
+          "name": "ElevenLabs",
+          "what_you_get": "A natural human-sounding narration voice instead of the free stand-in tone.",
+          "example": "A natural voice for a 15 minute episode: the kit voices the script in chunks, pays for each chunk once, and checks your character allowance first.",
+          "connect": [
+            "Make an ElevenLabs account at elevenlabs.io (check the site for what the plans include).",
+            "Open the key page in your account and create an API key.",
+            "Save it in the file ~/.config/bagelunit-reels/elevenlabs.key (the Reel Kit setup makes the empty file; paste the key yourself, never into the chat).",
+            "Run video doctor: it should say the key file exists."
+          ],
+          "kind": "key",
+          "detect": { "file": "~/.config/bagelunit-reels/elevenlabs.key" },
+          "url": "https://elevenlabs.io",
+          "tips": ["voice"]
+        },
+        {
+          "id": "other-voice",
+          "name": "Another voice service",
+          "what_you_get": "Any other text-to-speech or recorded narration you already use.",
+          "example": "Your own recording of the script, or a voice from another service, dropped in as the episode's audio.",
+          "connect": [
+            "Tell Claude which service you use; the kit does not require a particular one.",
+            "Keep the key or login with you: it is never asked for, printed or stored by the kit."
+          ],
+          "kind": "app",
+          "detect": {},
+          "url": "",
+          "tips": []
+        }
+      ]
+    },
+    {
+      "id": "music-and-effects",
+      "title": "Music and sound effects",
+      "question": "Do you have a library for music or sound effects?",
+      "tools": [
+        {
+          "id": "uppbeat",
+          "name": "Uppbeat",
+          "what_you_get": "Licensed music (and some effects) you can use in a monetised YouTube video, recorded in the channel's licensed register with its licence.",
+          "example": "A different music bed per chapter, ducked under the voice, recorded with its licence so the credits and the upload check are done for you.",
+          "connect": [
+            "Make an Uppbeat account and pick a plan that covers your use (check the site).",
+            "Download a track by hand and safelist your channel in your Uppbeat account.",
+            "Record it with video licensed add <file> --type music --title ... --source uppbeat --plan ...; the kit never downloads anything for you."
+          ],
+          "kind": "download",
+          "detect": { "register_source": "uppbeat" },
+          "url": "https://uppbeat.io",
+          "tips": ["render"]
+        },
+        {
+          "id": "epidemic-sound",
+          "name": "Epidemic Sound",
+          "what_you_get": "A large licensed music and sound effect catalogue, searchable from Claude when its connector is on.",
+          "example": "Ask for a tense low strings bed for the investigation chapter and a door slam for the cold open, download them yourself and record them with their licence.",
+          "connect": [
+            "Make an Epidemic Sound account and plan that covers YouTube (check the site).",
+            "Optional: turn on the Epidemic Sound connector in your Claude account (Connectors) so Claude can search it.",
+            "Download each file by hand and record it with video licensed add (--source epidemic-sound)."
+          ],
+          "kind": "mcp",
+          "detect": { "mcp": "epidemic" },
+          "url": "https://www.epidemicsound.com",
+          "tips": []
+        }
+      ]
+    },
+    {
+      "id": "3d",
+      "title": "3D",
+      "question": "Do you have Blender for 3D shots?",
+      "tools": [
+        {
+          "id": "blender",
+          "name": "Blender (with the Blender Lab MCP)",
+          "what_you_get": "Free 3D rendering for hero objects, titles and maps; the Blender Lab MCP lets Claude work in a live Blender window.",
+          "example": "A shaded-relief map of the mountain range for a geography episode, or a 3D hero object for a cold open, rendered into the video's assets/blender/ folder.",
+          "connect": [
+            "Install Blender 4.2 or newer from blender.org (free). The installer prints the one command for your system.",
+            "Run video doctor: it should say Blender was found.",
+            "Optional: install the official Blender Lab MCP so Claude can work live; claude mcp list then shows a blender server.",
+            "Use /blender-shot for the first shot."
+          ],
+          "kind": "app",
+          "detect": {
+            "command": "blender",
+            "blender": true,
+            "paths": ["/Applications/Blender.app", "C:/Program Files/Blender Foundation", "/usr/bin/blender", "/snap/bin/blender"],
+            "mcp": "blender"
+          },
+          "url": "https://www.blender.org",
+          "tips": ["new", "thumbnail", "render"]
+        }
+      ]
+    },
+    {
+      "id": "generated-video",
+      "title": "Generated video",
+      "question": "Do you have a generated-video tool?",
+      "tools": [
+        {
+          "id": "higgsfield",
+          "name": "Higgsfield",
+          "what_you_get": "Short generated video shots from a prompt or a still, for moments no footage exists of. Generated shots must be labelled as re-creations.",
+          "example": "A 5 second establishing shot of a 1900s factory floor between chapters, labelled Re-creation, brought in as your own clip.",
+          "connect": [
+            "Make a Higgsfield account (check the site for what the plans include).",
+            "Optional: turn on the Higgsfield connector in your Claude account so Claude can generate shots for you.",
+            "Save each shot you keep inside the channel folder and use it as a \"file\" clip."
+          ],
+          "kind": "mcp",
+          "detect": { "mcp": "higgsfield" },
+          "url": "https://higgsfield.ai",
+          "tips": ["new"]
+        },
+        {
+          "id": "other-generated-video",
+          "name": "Another generated-video tool",
+          "what_you_get": "Any other tool that makes short clips from a prompt.",
+          "example": "A short clip you generated elsewhere, saved into the channel folder and used as a clip between two chapters.",
+          "connect": [
+            "Tell Claude which tool you use; any clip saved in the channel folder works as a \"file\" clip.",
+            "Label generated shots as re-creations on screen."
+          ],
+          "kind": "app",
+          "detect": {},
+          "url": "",
+          "tips": []
+        }
+      ]
+    },
+    {
+      "id": "design",
+      "title": "Design",
+      "question": "Do you have a design tool for thumbnails and graphics?",
+      "tools": [
+        {
+          "id": "canva",
+          "name": "Canva",
+          "what_you_get": "Designed thumbnails and graphics from your own templates, with Claude working through the Canva connector.",
+          "example": "A thumbnail from your channel template in two minutes, then video thumbnail --image to add the kit's text treatment and size it to 1280x720.",
+          "connect": [
+            "Make a Canva account (check the site for what the plans include).",
+            "Optional: turn on the Canva connector in your Claude account so Claude can open and export designs.",
+            "Export the design as an image into the channel folder and run video thumbnail --image <file>."
+          ],
+          "kind": "mcp",
+          "detect": { "mcp": "canva" },
+          "url": "https://www.canva.com",
+          "tips": ["thumbnail"]
+        },
+        {
+          "id": "adobe-firefly",
+          "name": "Adobe Firefly or Adobe Express",
+          "what_you_get": "Generated and designed images, backgrounds and thumbnails in Adobe's web tools.",
+          "example": "A moody background for a thumbnail generated in Firefly, then used with video thumbnail --image and your headline.",
+          "connect": [
+            "Sign in at firefly.adobe.com or express.adobe.com (check the site for what your plan includes).",
+            "Save the image into the channel folder and run video thumbnail --image <file>."
+          ],
+          "kind": "app",
+          "detect": {},
+          "url": "https://firefly.adobe.com",
+          "tips": ["thumbnail"]
+        },
+        {
+          "id": "adobe-connector",
+          "name": "Adobe connector for Claude",
+          "what_you_get": "Lets Claude work with your Adobe tools directly instead of you moving files by hand.",
+          "example": "Claude opens your Express template, swaps the headline and exports the image for video thumbnail --image.",
+          "connect": [
+            "Turn on the Adobe connector in your Claude account (Connectors), if your account offers it.",
+            "Sign in to Adobe when asked."
+          ],
+          "kind": "mcp",
+          "detect": { "mcp": "adobe" },
+          "url": "",
+          "tips": []
+        }
+      ]
+    }
+  ]
+}

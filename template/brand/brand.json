@@ -31,5 +31,13 @@
   "cta": {
     "line": ""
   },
-  "reels_folder": ""
+  "reels_folder": "",
+  "tools": {
+    "have": [],
+    "none": false,
+    "other": [],
+    "dismissed": [],
+    "asked": "",
+    "tips": true
+  }
 }
