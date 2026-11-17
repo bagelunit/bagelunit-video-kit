@@ -10,7 +10,7 @@
 //      change (otherwise it stops and says why: nothing has been changed).
 //   2. the installer (`bash setup/install.sh`, on Windows `node setup/install.mjs`), which puts the engine in
 //      ~/.claude/skills/bagelunit-video again (linked again if it was linked).
-//   3. the channel folder's template files. It updates only what the kit owns (CLAUDE.md, .claude/skills, scripts,
+//   3. the channel folder's template files. It updates only what the kit owns (CLAUDE.md, .claude/skills, scripts, brand/library/3d,
 //      brand/licensed/README.md); every file it replaces is first saved next to it as <name>.bak-<stamp>. It adds starter files
 //      that are missing and any new setting in brand/brand.json (an existing value is never changed), and adds missing lines
 //      to .gitignore. It NEVER touches the channel's own data: brand values, brand/licensed assets, videos/, CLAUDE.local.md.
@@ -134,6 +134,8 @@ export const defaultInstall = (kit, o) => {
 
 /* ── the channel folder ─────────────────────────────────────────────────────────────────────────────────────────────── */
 const BRAND_OWNED = new Set(['brand/licensed/README.md']);          // docs inside brand/ that belong to the kit
+// the Blender library is the kit's own code (updated like skills and scripts); other files the owner adds in brand/library/ are never touched
+export const brandOwned = (rel) => BRAND_OWNED.has(rel) || rel.startsWith('brand/library/3d/');
 function addMissing(target, source, trail = '') {
   const added = [];
   for (const [k, v] of Object.entries(source)) {
@@ -156,7 +158,7 @@ export function planTemplate(kit, channel) {
       if (!has) { plan.add.push(rel); continue; }
       const mine = readJSON(dst, null), theirs = readJSON(src, {});
       if (!mine) plan.kept.push(`${rel} (not valid JSON: left alone)`); else plan.settings = addMissing(JSON.parse(JSON.stringify(mine)), theirs);
-    } else if (rel.startsWith('brand/') && !BRAND_OWNED.has(rel)) { if (!has) plan.add.push(rel); else plan.kept.push(rel); }
+    } else if (rel.startsWith('brand/') && !brandOwned(rel)) { if (!has) plan.add.push(rel); else plan.kept.push(rel); }
     else if (!has) plan.add.push(rel);
     else if (fs.readFileSync(src).equals(fs.readFileSync(dst))) plan.same.push(rel);
     else plan.replace.push(rel);

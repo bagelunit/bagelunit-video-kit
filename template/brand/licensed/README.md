@@ -34,3 +34,7 @@ A video refers to an asset by its id; nothing is typed as a file path.
 - Licensed video and overlays decorate; they never carry the story. The explanation is the original scenes and the voice.
 - Every asset used must be recorded, its file and hash must match, and the channel must be in its `channels`. `video approve <video> final` refuses otherwise.
 - The credits go in the YouTube description: `video licensed credits <video>` writes a "Music and assets" block at the end of `out/youtube.txt`, and the final approval records the list.
+
+## Your own renders are not licensed assets
+
+A clip or overlay that is your own work (a Blender render, code) needs no entry here: a scene names it with `"file"` instead of `"asset"`, for example `{"clip": {"file": "assets/blender/product.mp4"}, "narration": "..."}`. The path is relative to the video folder (or `brand/library/`) and must stay inside the channel folder. `video licensed check` ignores these files, they are not in the credits, and they may be used in the vertical version too. See `brand/library/3d/README.md`.

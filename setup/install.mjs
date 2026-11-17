@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import * as blender from '../studio/tools/blender.mjs';
 
 const link = process.argv.includes('--link'), dry = process.argv.includes('--dry-run');
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,6 +32,14 @@ const pwOk = fs.existsSync(path.join(REEL, 'node_modules', 'playwright'));
 say(pwOk, pwOk ? 'Playwright found in the Reel Kit engine' : 'Playwright is missing: npm install and npm run browser inside ~/.claude/skills/bagelunit-reels');
 const key = fs.existsSync(path.join(os.homedir(), '.config', 'bagelunit-reels', 'elevenlabs.key'));
 say(key, key ? 'voice key file found (a real voice works)' : 'no ElevenLabs key file yet: a stand-in tone works without it; the Reel Kit SETUP.md section 3 says how to add one');
+
+// Blender (free 3D, optional): only looked for and reported. Never installed here, never asked about: the NOTE says how to get it
+// and the person decides. BAGELUNIT_BLENDER_PATHS (a PATH-style list) replaces the places searched, for tests.
+{
+  const b = blender.describe();
+  if (b.ok) say(true, b.text);
+  else say(false, b.text);
+}
 
 if (dry) { say(null, `would ${link ? 'link' : 'copy'} ${STUDIO} to ${TARGET}`); process.exit(0); }
 fs.mkdirSync(path.dirname(TARGET), { recursive: true });

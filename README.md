@@ -8,6 +8,7 @@ Make YouTube videos with Claude Code: give it a topic and it researches it, maps
 - **One folder per channel.** Run several YouTube channels from one kit, each with its own topic, voice, colours, facts and sign-in.
 - **A dashboard** for each channel: what needs you, every video's step, a calendar, voice credits left, and a card that plays each video.
 - **Licensed material, recorded.** Music, sound effects, stock video, motion graphics and LUTs come from any source you have the rights to (Uppbeat is what we use and suggest), downloaded by you; the kit ships none, records each one, checks its file and its channel safelist, and refuses the final approval if the check fails.
+- **3D shots and maps, optional.** With free Blender installed, `/blender-shot` makes a product, prop, title or map shot (a shaded-relief map of any latitude/longitude box from free elevation tiles) as your own clip or overlay, and a Blender still can be the thumbnail. Without Blender nothing else changes.
 - **Easy to update.** `video update` (or `/video-update` in a channel folder) pulls the kit, installs the engine again and updates the channel folder, with a dry run first and a backup of every file it replaces.
 - **Reels too.** With the BagelUnit Reel Kit, the best stretches of a video become vertical reels in the same style.
 
@@ -35,7 +36,7 @@ topic -> style -> research (sources) -> report and map -> YOUR GO-AHEAD
 | Folder | What |
 |---|---|
 | `studio/` | the engine, installed as the Claude Code skill `bagelunit-video`: the work order (`SKILL.md`), the commands (`tools/`), the 20 scene styles, the dashboard and the playbook |
-| `template/` | a channel folder, copied by `/video-setup` for each channel (with `brand/licensed/`, the register and README for licensed material) |
+| `template/` | a channel folder, copied by `/video-setup` for each channel (with `brand/licensed/`, the register and README for licensed material, and `brand/library/3d/`, the optional Blender shots) |
 | `setup/` | the installer, the channel folder maker, the repo scan and the tests |
 | `docs/` | notes for people changing the kit |
 

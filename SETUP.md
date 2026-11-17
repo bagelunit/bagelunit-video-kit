@@ -12,6 +12,7 @@ Below, `video <command>` is short for `node ~/.claude/skills/bagelunit-video/too
 | [Node.js](https://nodejs.org) 22 or newer, and ffmpeg | the commands and the video files | free |
 | The [BagelUnit Reel Kit](https://github.com/bagelunit/bagelunit-reel-kit), installed | the voice tool, the headless browser that draws the scenes, the fonts and the sound effects | free |
 | An [ElevenLabs](https://elevenlabs.io) account with a key (our suggested voice service; other providers can be connected) | the voice | about 900 characters per minute of video (section 8) |
+| [Blender](https://www.blender.org) 4.2 or newer (optional) | 3D shots and terrain maps (`/blender-shot`); never needed for the rest | free |
 | A YouTube channel and its Google account (optional) | uploading from this computer | free |
 | Chrome (or Edge, Brave, Arc, Vivaldi, Opera) with Claude in Chrome (optional) | Claude does the web steps in your browser | free |
 
@@ -20,6 +21,7 @@ Below, `video <command>` is short for `node ~/.claude/skills/bagelunit-video/too
 1. **The Reel Kit first.** Follow its README: `bash setup/install.sh` in its folder. Its setup walks you through the ElevenLabs key (you paste it into a file Claude opens; nobody else sees it).
 2. **This kit.** Download it (Code, Download ZIP, or `git clone https://github.com/bagelunit/bagelunit-video-kit`), open a terminal in its folder and run `bash setup/install.sh` (Windows: `node setup/install.mjs`). It checks ffmpeg and the Reel Kit and installs the skill `bagelunit-video`.
 3. **Check.** `video doctor` lists what is installed and what is missing, with the command that fixes each.
+4. **Optional tools.** Blender (free 3D) is looked for but never installed for you: `bash setup/install.sh` prints its version, or a NOTE with how to get it (`brew install --cask blender` on a Mac, `winget install BlenderFoundation.Blender` on Windows, `sudo snap install blender --classic` or blender.org on Linux). `video doctor` says whether it is found. If it is installed somewhere unusual, set `BAGELUNIT_BLENDER` to its program. Only the 3D shots in a channel's `brand/library/3d/` need it.
 
 ## 3. Make a channel folder
 
@@ -121,6 +123,12 @@ Music, sound effects, stock video, motion graphics and LUTs may come from any so
 5. Before the final approval write the credits: `video licensed credits <video>` adds a "Music and assets" block to `out/youtube.txt`. `video approve <video> final` refuses while `video licensed check` fails (an asset not recorded, a file or hash that changed, the channel not in its `channels`, or the credits missing) and records the list with the credits.
 
 Licensed video and overlays decorate; they never carry the story. `assets.json` is kept in git, the media files are not.
+
+## 6d. 3D shots and maps (optional)
+
+With Blender installed, `/blender-shot` in a channel folder makes a product, phone, title or map shot, renders a still to look at, then a clip into `videos/<name>/assets/blender/` (not kept in git), and wires it into `scenes.json` as your own render: `{"clip": {"file": "assets/blender/product.mp4"}, "narration": "..."}` or `"overlay": {"file": "assets/blender/title.mov"}`. Your own renders need no licensed-asset record and no credit, may be used in the vertical version, and must stay inside the channel folder. `video thumbnail <video> --image assets/blender/product-still.png --text "..."` uses a still as the thumbnail's picture. The optional Blender Lab MCP (`claude mcp list` shows `blender`) is a faster live path; nothing needs it.
+
+`brand/library/3d/terrain.py --bbox SOUTH,WEST,NORTH,EAST --video <name>` makes a shaded-relief map. It downloads the free Terrain Tiles (no key; the one place the kit uses the network, only when you run it, a few tiles at a time, cached in the video folder), writes `ATTRIBUTION.txt` next to the render and prints it: put it in the video description.
 
 ## 7. Reels from a video (with the Reel Kit)
 

@@ -66,6 +66,56 @@ export function safePath(root, rel) {
   return abs;
 }
 
+/* ── the owner's own files (renders from Blender or code): no register, no credits ─────────────────────────────────────── */
+// A clip or overlay may name {"file": "<path>"} instead of a recorded asset. The path is relative to the video folder (or to the
+// channel's brand/library/), may not be absolute or hold "..", and the file it finds (after links are followed) must sit inside the
+// channel folder. These files are the owner's own work: never licensed, never in the credits, never in `video licensed check`.
+const real = (p) => (fs.realpathSync.native || fs.realpathSync)(p);
+export function checkOwnPath(rel) {
+  if (typeof rel !== 'string' || !rel.trim() || rel.includes('\0')) throw new Error('the file path is empty or not text');
+  if (path.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel) || rel.startsWith('\\\\')) throw new Error(`"${rel}" is an absolute path: use a path inside the channel folder, relative to the video folder (for example assets/blender/shot.mov) or to brand/library/`);
+  if (rel.split(/[\\/]+/).includes('..')) throw new Error(`"${rel}" goes up out of its folder (".."): own files must stay inside the channel folder`);
+  return rel.replace(/\\/g, '/');
+}
+export function ownFile(root, videoDir, rel) {
+  rel = checkOwnPath(rel);
+  const top = root || videoDir, rootReal = real(top);
+  const tried = [path.resolve(videoDir, rel)];
+  if (root) tried.push(path.resolve(root, 'brand', 'library', rel));
+  for (const abs of tried) {
+    if (!fs.existsSync(abs)) continue;
+    const r = real(abs);
+    if (r !== rootReal && !r.startsWith(rootReal + path.sep)) throw new Error(`"${rel}" leads outside the channel folder through a link: refused`);
+    if (!fs.statSync(abs).isFile()) throw new Error(`"${rel}" is a folder, not a file`);
+    return abs;
+  }
+  throw new Error(`the file "${rel}" does not exist (looked in the video folder and in brand/library/)`);
+}
+// Any file of the owner's inside the channel folder (a thumbnail base image, for example). Unlike a clip path this may be absolute or
+// relative to the current folder, but it must still be inside the channel folder once links are followed.
+export function channelFile(root, bases, p) {
+  if (typeof p !== 'string' || !p.trim() || p.includes('\0')) throw new Error('the image path is empty or not text');
+  const top = root || bases[0], topReal = real(top);
+  const cands = path.isAbsolute(p) ? [p] : bases.map((b) => path.resolve(b, p));
+  let lastOutside = null;
+  for (const abs of cands) {
+    if (!fs.existsSync(abs)) continue;
+    const r = real(abs);
+    if (r !== topReal && !r.startsWith(topReal + path.sep)) { lastOutside = abs; continue; }
+    if (!fs.statSync(abs).isFile()) throw new Error(`"${p}" is a folder, not a file`);
+    return abs;
+  }
+  if (lastOutside) throw new Error(`"${p}" is outside the channel folder (${top.split(path.sep).join('/')}): refused. Copy the image into the channel folder first.`);
+  throw new Error(`the image "${p}" does not exist`);
+}
+// sha256 of a file, remembered while its size and time stay the same (a render asks for it several times)
+const shaMemo = new Map();
+export function ownSha(file) {
+  const st = fs.statSync(file), key = `${file}|${st.size}|${st.mtimeMs}`;
+  if (!shaMemo.has(key)) shaMemo.set(key, sha256File(file));
+  return shaMemo.get(key);
+}
+
 export function loadRegister(root) {
   const f = path.join(root, REGISTER);
   if (!fs.existsSync(f)) return { assets: [] };
@@ -198,6 +248,22 @@ export function usedAssets(videoDir) {
   return out;
 }
 
+// [{file, use}] for the owner's own files in scenes.json: {"clip": {"file"}} and {"overlay": {"file"}} (and their vertical variants).
+// They are not licensed assets: usedAssets, the credits and `video licensed check` never see them.
+export function usedOwnFiles(videoDir) {
+  const plan = readJSON(path.join(videoDir, 'scenes.json'), {});
+  const list = Array.isArray(plan) ? plan : plan?.scenes || [];
+  const out = [];
+  list.forEach((s, k) => {
+    for (const x of [s, s?.vertical]) {
+      if (!x || typeof x !== 'object') continue;
+      if (x.clip && typeof x.clip.file === 'string') out.push({ file: x.clip.file, use: `scene ${k + 1} clip` });
+      for (const o of [].concat(x.overlay || [])) if (o && typeof o.file === 'string') out.push({ file: o.file, use: `scene ${k + 1} overlay` });
+    }
+  });
+  return out;
+}
+
 // one asset resolved for use: the record and its absolute path (throws when the record, its type or its file is wrong)
 export function resolveAsset(root, id, wantType) {
   const rec = findAsset(loadRegister(root), String(id));
@@ -246,6 +312,9 @@ export function check(root, videoDir = null) {
 // notes for `video check`: things that will stop the render (a missing LUT or clip file), as warnings
 export function notesFor(videoDir) {
   const root = channelRoot(videoDir), notes = [];
+  for (const u of usedOwnFiles(videoDir)) {
+    try { ownFile(root, videoDir, u.file); } catch (e) { notes.push(`${u.use}: ${e.message} (the render will stop)`); }
+  }
   const used = usedAssets(videoDir);
   if (!used.length) return notes;
   if (!root) return [`this video uses licensed assets (${used.map((u) => u.id).join(', ')}) but is not inside a channel folder, so none can be found`];

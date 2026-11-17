@@ -193,14 +193,14 @@ await test('planOf plans a stock-video clip scene and overlays on any scene (no 
   assert.equal(s[0].narration, 'A city at dusk.', 'its time comes from its narration like any scene');
   const bad = (scene, re) => { fs.writeFileSync(path.join(d, 'scenes.json'), JSON.stringify({ scenes: [scene] })); assert.throws(() => scenes.planOf(d, styleId), re); };
   bad({ clip: { asset: 'x' }, template: tpl }, /no template or code/);
-  bad({ clip: { start: 1 } }, /"clip" must be/);
+  bad({ clip: { start: 1 } }, /"clip" needs exactly one of "asset"/);
   bad({ clip: { asset: 'x', start: -1 } }, /"start"/);
   bad({ clip: { asset: 'x', duration: 0 } }, /"duration"/);
   bad({ clip: { asset: 'x', mute: false } }, /always muted/);
   bad({ template: tpl, overlay: { asset: 'x', blend: 'multiply' } }, /normal or screen/);
   bad({ template: tpl, overlay: { asset: 'x', opacity: 2 } }, /opacity/);
   bad({ template: tpl, overlay: { asset: 'x', at: -1 } }, /"at"/);
-  bad({ template: tpl, overlay: {} }, /"overlay" must be/);
+  bad({ template: tpl, overlay: {} }, /"overlay" needs exactly one of/);
 });
 
 await test('look: strength defaults to 1 and is checked', () => {

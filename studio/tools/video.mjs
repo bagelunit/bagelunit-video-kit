@@ -17,7 +17,7 @@
 //   node video.mjs check <folder> [--only n]               every scene: errors, safe area, seeking, stills to look at
 //   node video.mjs render <folder> [--scene n] [--force]   render changed scenes, join them, mix the voice: out/video.mp4
 //   node video.mjs chapters <folder>                       out/chapters.txt (YouTube chapters) from the scenes' "chapter"
-//   node video.mjs thumbnail <folder> [--at s | --scene n] [--text "WORDS *ONE*"] [--plain] [--name b | --use b]  out/thumbnail.jpg (1280x720)
+//   node video.mjs thumbnail <folder> [--at s | --scene n | --image file [--fit cover|contain] [--bg 0E0E14]] [--text "WORDS *ONE*"] [--plain] [--name b | --use b]  out/thumbnail.jpg (1280x720)
 //   node video.mjs captions <folder>                       out/captions.<lang>.srt from the word clock (the upload adds it)
 //   node video.mjs qa <folder>                             the finished file: format, length, loudness, black or still stretches
 //   node video.mjs sources <folder> [--no-archive] [--no-doi]  check every DOI at Crossref and archive the links: source-safety.md
@@ -37,6 +37,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as scenes from './scenes.mjs';
 import * as checks from './checks.mjs';
+import * as licensed from './licensed.mjs';
+import * as blender from './blender.mjs';
 
 const TOOLS = path.dirname(fileURLToPath(import.meta.url));
 export const REEL_ENGINE = process.env.BAGELUNIT_REEL_ENGINE || path.join(os.homedir(), '.claude', 'skills', 'bagelunit-reels');
@@ -403,18 +405,33 @@ async function thumbnail(video, flags) {
     fs.copyFileSync(from, out);
     return console.log(`out/thumbnail.jpg is now version ${flags.use}`);
   }
-  const prep = scenes.prepare(video);
-  let at;
-  if (flags.at && flags.at !== true) at = Number(flags.at);
-  else if (flags.scene && flags.scene !== true) { const t = prep.times[Number(flags.scene) - 1]; if (!t) die(`no scene ${flags.scene}`); at = t.t0 + (t.t1 - t.t0) * 0.7; }
-  else at = (video.cfg.thumbnail && video.cfg.thumbnail.at) ?? Math.min(prep.length * 0.05 + 3, prep.length - 0.1);
-  const view = await scenes.openScenes(video, { scale: 1 });
-  let jpg;
-  try { jpg = await view.frameAt(at, 0.95); } finally { await view.close(); }
   const name = flags.name && flags.name !== true ? String(flags.name).replace(/[^\w-]/g, '') : null;
   const target = name ? path.join(outDir, 'thumbnails', `${name}.jpg`) : out;
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const text = flags.text && flags.text !== true ? String(flags.text) : '';
+  // --image <file>: the base is a picture the owner made (a Blender render, any image inside the channel folder), not a scene frame
+  let at = null, jpg, usedImage = null;
+  if (flags.image !== undefined) {
+    if (flags.image === true) die('--image needs a file: video thumbnail <folder> --image assets/blender/hero.png --text "..."');
+    const fit = flags.fit === undefined ? 'cover' : String(flags.fit);
+    if (!['cover', 'contain'].includes(fit)) die(`--fit must be cover or contain (it is "${fit}")`);
+    let file;
+    try { file = licensed.channelFile(licensed.channelRoot(video.dir), [process.cwd(), video.dir, licensed.channelRoot(video.dir) || video.dir], flags.image); } catch (e) { die(e.message); }
+    const bg = /^#?[0-9a-f]{6}$/i.test(String(flags.bg || '')) ? String(flags.bg).replace('#', '') : '0E0E14';
+    const fitFilter = fit === 'cover' ? 'scale=1280:720:force_original_aspect_ratio=increase:flags=lanczos,crop=1280:720' : 'scale=1280:720:force_original_aspect_ratio=decrease:flags=lanczos,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black@0';
+    // a picture with transparency (a Blender render with a clear background) is laid on a flat colour (--bg, default near black) first
+    const graph = `color=c=0x${bg}:s=1280x720[b];[0:v]format=rgba,${fitFilter},format=rgba[i];[b][i]overlay=0:0:format=auto,format=yuv420p`;
+    const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-filter_complex', graph, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '2', '-'], { maxBuffer: 1 << 27 });
+    if (r.status !== 0 || !r.stdout.length) die(`could not read the image ${flags.image}: ${String(r.stderr || '').slice(-300)}`);
+    jpg = r.stdout; usedImage = path.relative(licensed.channelRoot(video.dir) || video.dir, file).split(path.sep).join('/');
+  } else {
+  const prep = scenes.prepare(video);
+  if (flags.at && flags.at !== true) at = Number(flags.at);
+  else if (flags.scene && flags.scene !== true) { const t = prep.times[Number(flags.scene) - 1]; if (!t) die(`no scene ${flags.scene}`); at = t.t0 + (t.t1 - t.t0) * 0.7; }
+  else at = (video.cfg.thumbnail && video.cfg.thumbnail.at) ?? Math.min(prep.length * 0.05 + 3, prep.length - 0.1);
+  const view = await scenes.openScenes(video, { scale: 1 });
+  try { jpg = await view.frameAt(at, 0.95); } finally { await view.close(); }
+  }
   if (text) {
     const brand = checks.findBrand(video.dir);
     const accent = /^#[0-9a-f]{3,8}$/i.test(video.cfg.thumbnail?.accent || '') ? video.cfg.thumbnail.accent : /^#[0-9a-f]{3,8}$/i.test(brand?.cfg.colors?.accent || '') ? brand.cfg.colors.accent : '#FFD23F';
@@ -437,7 +454,7 @@ async function thumbnail(video, flags) {
     if (r.status !== 0) die(`thumbnail failed: ${(r.stderr || '').slice(-300)}`);
   }
   const rel = path.relative(video.dir, target);
-  console.log(`${rel} (1280x720, ${(fs.statSync(target).size / 1024).toFixed(0)} KB, the frame at ${at.toFixed(1)} s${text ? `, "${text.replace(/\*/g, '')}"` : ''}). Look at it, also small (about 320 px wide, the size on a phone).`);
+  console.log(`${rel} (1280x720, ${(fs.statSync(target).size / 1024).toFixed(0)} KB, ${usedImage ? `your image ${usedImage}` : `the frame at ${at.toFixed(1)} s`}${text ? `, "${text.replace(/\*/g, '')}"` : ''}). Look at it, also small (about 320 px wide, the size on a phone).`);
   const title = (fs.existsSync(path.join(outDir, 'youtube.txt')) ? fs.readFileSync(path.join(outDir, 'youtube.txt'), 'utf8').split('\n')[0] : '') || video.cfg.title || '';
   for (const n of thumbnailNotes(text, title)) console.log(`note: ${n}`);
   if (fs.statSync(target).size > 2 * 1024 * 1024) console.log('note: YouTube takes thumbnails up to 2 MB; this is larger');
@@ -506,6 +523,9 @@ function doctor() {
   const reg = scenes.registry();
   ok(Boolean(reg && reg.format === 'wide'), `styles synced for wide: ${reg ? `${scenes.sceneStyleIds().length} (styles repo ${reg.version}, ${reg.synced})` : 'none'}`, 'node sync-to-kit.mjs --kit <this kit> --format wide --apply in bagelunit-styles');
   ok(fs.existsSync(path.join(os.homedir(), '.config', 'bagelunit-video')), 'YouTube folder ~/.config/bagelunit-video (only for upload)');
+  // Blender is optional (3D shots in a channel's brand/library/3d): a note, never an error
+  const bl = blender.describe();
+  console.log(`${bl.ok ? 'ok     ' : 'note   '} ${bl.text}`);
 }
 
 /* ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────── */

@@ -8,3 +8,7 @@ videos/*/audio/
 # licensed media (downloaded files) stays on this computer; the register brand/licensed/assets.json is kept
 brand/licensed/*/*
 !brand/licensed/*/.gitkeep
+# Blender renders, frames and the terrain tile cache stay on this computer
+videos/*/assets/blender/
+__pycache__/
+*.pyc

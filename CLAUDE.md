@@ -11,15 +11,16 @@ This folder is the kit's source, not a place to make videos. Videos are made in 
 
 ## Changing the kit
 
-- **The engine** is `studio/`, installed as `~/.claude/skills/bagelunit-video` (the work order is `studio/SKILL.md`; commands in `studio/tools/`: `video.mjs`, `scenes.mjs`, `checks.mjs`, `sources.mjs`, `archive.mjs`, `reels.mjs`, `youtube.mjs`, `sfx.py`). After a change, re-run `node setup/install.mjs` (or install with `--link`).
+- **The engine** is `studio/`, installed as `~/.claude/skills/bagelunit-video` (the work order is `studio/SKILL.md`; commands in `studio/tools/`: `video.mjs`, `scenes.mjs`, `checks.mjs`, `sources.mjs`, `archive.mjs`, `reels.mjs`, `youtube.mjs`, `blender.mjs`, `sfx.py`). After a change, re-run `node setup/install.mjs` (or install with `--link`).
 - **The dashboard** is `studio/dashboard/` (model, page, client, bundled Poppins). Read `docs/dashboard-design.md` before changing its look; it follows the Reel Kit dashboard's rules. Check changes at 1280, 980 and 390 px.
 - **The channel folder** is `template/` (CLAUDE.md, brand/, the `/channel-setup` skill). `setup/new-workspace.mjs` copies it; existing channel folders are not updated by it.
 - **Styles are copies.** `studio/styles/` is written by `sync-to-kit.mjs` in the bagelunit-styles repo (`node sync-to-kit.mjs --kit <this folder> --format wide`, dry run first, then `--apply`). Never edit it here.
 - **Updating** is `video update` (`studio/tools/update.mjs`, the channel skill `/video-update`): it needs the clone's path, which the installer records in `~/.claude/skills/bagelunit-video/.install.json` (a linked install points into the clone). A change to what channel folders get (`template/`) reaches existing folders only through it. Its tests are `setup/test-update.mjs`.
 - **Licensed material** (any source you have rights to, Uppbeat is what we use and suggest; YouTube only) is a mechanism, never files: `studio/tools/licensed.mjs`, the register `template/brand/licensed/assets.json` (empty), its README, and the tests in `setup/test-licensed.mjs`. Never commit audio, video, LUT or other asset files; the scan fails on media.
+- **Blender library** (`template/brand/library/3d/`) is the kit's own code, adapted from the Reel Kit's but independent of it (no import at run time; copy and adapt). `video update` treats it as kit-owned (`brandOwned` in `studio/tools/update.mjs`); other files in `brand/library/` are the owner's. The only network code is `terrain.py` there, on its explicit command. Its tests are `setup/test-blender.mjs` (CI skips the Blender part when Blender is missing). Own clips and overlays (`"file"`) live in `scenes.mjs`/`licensed.mjs` (`ownFile`).
 - **Commands reference:** when a command or skill is added or changed, update `COMMANDS.md` and `SETUP.md`.
 - **Everything is our own code.** Do not copy or keep outside material in the repo. Invent names in samples; no real people, other companies' characters or logos.
-- **Never commit** keys, `.env` files, photos of people, renders (`*.mp4`), audio, thumbnails or `node_modules`. Run `node setup/scan-repo.mjs` before any commit; `node setup/test-video.mjs`, `node setup/test-licensed.mjs` and `node setup/test-update.mjs` must pass.
+- **Never commit** keys, `.env` files, photos of people, renders (`*.mp4`), audio, thumbnails or `node_modules`. Run `node setup/scan-repo.mjs` before any commit; `node setup/test-video.mjs`, `node setup/test-licensed.mjs`, `node setup/test-update.mjs` and `node setup/test-blender.mjs` must pass.
 - No em dashes in anything written here.
 
 ## Releasing

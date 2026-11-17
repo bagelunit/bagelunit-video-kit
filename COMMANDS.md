@@ -21,6 +21,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `/bagelunit-video <topic>` | Makes a video: style, research, a report and map for your go-ahead, script, fact check, voice, render, checks, your yes, upload. |
 | `/bagelunit-video <video name>` | Carries on with a video from its next step. |
 | `/channel-setup` | Sets up or changes the channel: name, topic, YouTube channel, voice, colour, styles, call to action, reels folder. |
+| `/blender-shot <what>` | Makes a 3D shot in Blender (a product, a map, a prop, a title): renders a still, looks at it, renders the clip into `videos/<name>/assets/blender/` and wires it into a scene as your own `"file"` clip or overlay, then `video check`. Blender is free and optional. |
 | `/db` | Redraws and opens the channel's dashboard (`video dashboard --open`) and says what it shows. |
 | `/video-update` | Updates the kit and this channel folder to the newest build: a dry run, your yes, then `video update --apply`. |
 
@@ -28,7 +29,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 
 | Command | What it does |
 |---|---|
-| `video doctor` | What is installed and what is missing, with the fix for each. |
+| `video doctor` | What is installed and what is missing, with the fix for each. Blender (optional) is reported as a note. |
 | `video styles [<style>]` | The 20 scene styles, or one style's templates. |
 | `video new <name> --style <id> --title "..."` | Starts a video folder (in a channel folder: `videos/<name>`), with an empty research page. |
 | `video facts <video> [--scope script\|final]` | The fact check: every number said or shown must be in research.md or the channel's facts.md. Writes a worksheet to re-read the sources. |
@@ -40,7 +41,7 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `video plan <video>` | Each scene's time, from the voice. |
 | `video check <video>` | Draws every scene: errors, anything outside the safe area, stills to look at. |
 | `video render <video> [--scene n] [--force]` | Renders the changed scenes (a scene that only moved in time keeps its render), joins them, mixes voice, music and sound effects: `out/video.mp4` and the chapters. `"music_fade": [in, out]` fades the music (default: a 3 s fade-out at the end); `"end_card": 15` runs the picture on after the voice for YouTube's end screen. |
-| `video thumbnail <video> [--text "WORDS *ONE*"] [--plain] [--name b \| --use b]` | The thumbnail (1280x720): a frame, with words in heavy capitals (`--plain`: all white, no accent-coloured word); versions for YouTube's thumbnail test. |
+| `video thumbnail <video> [--image <file> [--fit cover\|contain] [--bg HEX]] [--text "WORDS *ONE*"] [--plain] [--name b \| --use b]` | The thumbnail (1280x720): a frame, with words in heavy capitals (`--plain`: all white, no accent-coloured word); versions for YouTube's thumbnail test. `--image` uses your own picture (a Blender still, any image inside the channel folder) as the base instead of a scene frame. |
 | `video captions <video>` | Writes `out/captions.<lang>.srt` from the voice's word clock (2 lines of 42 characters at most). The upload adds it to the video. |
 | `video qa <video>` | Checks the finished file: size, frame rate, length, loudness, black or still stretches, a real voice. |
 | `video youtube login [--client <downloaded.json> [--all]] [--upload-only]` | Signs in this channel's YouTube account (once per channel; SETUP.md section 5), with permission to upload and to manage the channel (captions). `--upload-only` asks for uploading only (no captions). `--client` first installs Google's downloaded client file for this channel (`--all`: for every channel) and deletes the download. |
@@ -60,3 +61,10 @@ Most of the time you only need these: `/video-setup` (once per channel, in this 
 | `video licensed channels <id> a,b` | Sets which channels are safelisted for an asset (Uppbeat: Account, Safelist; other sources have their own). |
 | `video licensed credits <video>` | Writes (or refreshes) the "Music and assets" credits block at the end of `out/youtube.txt`. |
 | `video licensed remove <id> [--keep-file]` | Removes a record and its file. |
+
+## 3D shots (in a channel folder, `brand/library/3d/`; Blender is optional)
+
+| Command | What it does |
+|---|---|
+| `python3 brand/library/3d/blender_shot.py <shot.py> --video <name> [--still N \| --clip x.mov \| --mp4 x.mp4] [--vertical] [--size WxH] [--fps 30] [--seconds 4] [--samples 48]` | Runs a Blender shot headless on any system (`blender_shot.sh` is the bash wrapper; on Windows `python`). Output in `videos/<name>/assets/blender/`. `--still N` renders one frame; `--clip` encodes an alpha clip (ProRes 4444 `.mov`, or `.webm`); `--mp4` an opaque one. Blender is found at `BAGELUNIT_BLENDER`, on PATH, or in the standard places. |
+| `python3 brand/library/3d/terrain.py --bbox SOUTH,WEST,NORTH,EAST --video <name> [--still N \| --clip x.mov] [--label "Name@lat,lon"] [--ramp earth\|mono\|snow\|heat] [--sea-level 0] [--data-only] [--from-dir <data>]` | A shaded-relief map of a latitude/longitude box. Downloads the free Terrain Tiles (the only use of the network in the kit, only on this command, cached in the video folder, capped in size), writes `ATTRIBUTION.txt` and prints it for the video description, then renders. `--from-dir` renders saved data with no network. |
