@@ -2,6 +2,9 @@
 
 ## 1.1.1
 
+**Apify as a suggested research tool**
+- `video suggest apify` explains what it adds (reading other YouTube channels' public video lists to track competitors), how to connect it (a token saved in `~/.config/bagelunit-reels/apify.key`, the same file the Reel Kit uses) and detects it by that file. It is only a suggestion: nothing in the kit needs it, and it never reads other channels without your yes and a cost shown first. The YouTube competitor tracker that uses it is the next piece to build once your account is connected.
+
 **A fix for `video update`**
 - `video update --apply` from the command line stopped with "install is not a function" in 1.1.0, because only a test stand-in installer had been exercised. The command line now runs the real installer, and a test covers it. If you are on 1.1.0, update with `git pull` in the kit folder, then `bash setup/install.sh` (Windows: `node setup/install.mjs`), then `video update`.
 

@@ -18,9 +18,13 @@
             "Run video doctor: it should say the key file exists."
           ],
           "kind": "key",
-          "detect": { "file": "~/.config/bagelunit-reels/elevenlabs.key" },
+          "detect": {
+            "file": "~/.config/bagelunit-reels/elevenlabs.key"
+          },
           "url": "https://elevenlabs.io",
-          "tips": ["voice"]
+          "tips": [
+            "voice"
+          ]
         },
         {
           "id": "other-voice",
@@ -54,9 +58,13 @@
             "Record it with video licensed add <file> --type music --title ... --source uppbeat --plan ...; the kit never downloads anything for you."
           ],
           "kind": "download",
-          "detect": { "register_source": "uppbeat" },
+          "detect": {
+            "register_source": "uppbeat"
+          },
           "url": "https://uppbeat.io",
-          "tips": ["render"]
+          "tips": [
+            "render"
+          ]
         },
         {
           "id": "epidemic-sound",
@@ -69,7 +77,9 @@
             "Download each file by hand and record it with video licensed add (--source epidemic-sound)."
           ],
           "kind": "mcp",
-          "detect": { "mcp": "epidemic" },
+          "detect": {
+            "mcp": "epidemic"
+          },
           "url": "https://www.epidemicsound.com",
           "tips": []
         }
@@ -95,11 +105,20 @@
           "detect": {
             "command": "blender",
             "blender": true,
-            "paths": ["/Applications/Blender.app", "C:/Program Files/Blender Foundation", "/usr/bin/blender", "/snap/bin/blender"],
+            "paths": [
+              "/Applications/Blender.app",
+              "C:/Program Files/Blender Foundation",
+              "/usr/bin/blender",
+              "/snap/bin/blender"
+            ],
             "mcp": "blender"
           },
           "url": "https://www.blender.org",
-          "tips": ["new", "thumbnail", "render"]
+          "tips": [
+            "new",
+            "thumbnail",
+            "render"
+          ]
         }
       ]
     },
@@ -119,9 +138,13 @@
             "Save each shot you keep inside the channel folder and use it as a \"file\" clip."
           ],
           "kind": "mcp",
-          "detect": { "mcp": "higgsfield" },
+          "detect": {
+            "mcp": "higgsfield"
+          },
           "url": "https://higgsfield.ai",
-          "tips": ["new"]
+          "tips": [
+            "new"
+          ]
         },
         {
           "id": "other-generated-video",
@@ -155,9 +178,13 @@
             "Export the design as an image into the channel folder and run video thumbnail --image <file>."
           ],
           "kind": "mcp",
-          "detect": { "mcp": "canva" },
+          "detect": {
+            "mcp": "canva"
+          },
           "url": "https://www.canva.com",
-          "tips": ["thumbnail"]
+          "tips": [
+            "thumbnail"
+          ]
         },
         {
           "id": "adobe-firefly",
@@ -171,7 +198,9 @@
           "kind": "app",
           "detect": {},
           "url": "https://firefly.adobe.com",
-          "tips": ["thumbnail"]
+          "tips": [
+            "thumbnail"
+          ]
         },
         {
           "id": "adobe-connector",
@@ -183,8 +212,37 @@
             "Sign in to Adobe when asked."
           ],
           "kind": "mcp",
-          "detect": { "mcp": "adobe" },
+          "detect": {
+            "mcp": "adobe"
+          },
           "url": "",
+          "tips": []
+        }
+      ]
+    },
+    {
+      "id": "research",
+      "title": "Research and competitors",
+      "question": "Do you have a research or scraping tool?",
+      "tools": [
+        {
+          "id": "apify",
+          "name": "Apify",
+          "what_you_get": "A pay-as-you-go scraping platform. Saved once as a token, it lets the kit read other YouTube channels' public video lists (titles, views, publish dates) so you can track competitors and see which topics work for them. The Reel Kit already uses the same token to read Instagram accounts; a YouTube competitor tracker for this kit builds on it.",
+          "example": "the last 30 videos of five rival channels: which ones beat that channel's own median views, and what their titles and thumbnails have in common, to feed your next outline",
+          "kind": "key",
+          "detect": {
+            "file": [
+              "~/.config/bagelunit-reels/apify.key"
+            ]
+          },
+          "url": "https://apify.com",
+          "connect": [
+            "Make an Apify account and check the site for the current plan, free credit and usage terms.",
+            "Create an API token at console.apify.com/settings/integrations (Claude can open the page with the browser tool; you copy the token yourself).",
+            "Save it alone on one line in ~/.config/bagelunit-reels/apify.key (the same file the Reel Kit uses; Claude makes the empty file and opens it for you; never paste the token into the chat).",
+            "Reading other channels costs money on Apify's side: the kit shows the estimated cost first and runs nothing without your yes."
+          ],
           "tips": []
         }
       ]

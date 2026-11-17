@@ -60,7 +60,7 @@ const catalogIds = () => S.allTools().map((t) => t.id);
 await test('the catalog has the agreed shape, categories and tools', () => {
   const cat = JSON.parse(fs.readFileSync(path.join(REPO, 'studio', 'suggestions.json'), 'utf8'));
   assert.equal(cat.version, 1);
-  assert.deepEqual(cat.categories.map((c) => c.id), ['voice', 'music-and-effects', '3d', 'generated-video', 'design']);
+  assert.deepEqual(cat.categories.map((c) => c.id), ['voice', 'music-and-effects', '3d', 'generated-video', 'design', 'research']);
   const ids = new Set();
   for (const c of cat.categories) {
     assert.ok(c.title && c.question && c.tools.length, c.id);
@@ -141,7 +141,7 @@ await test('video suggest: catalog, detail, --json shape', () => {
   assert.match(one.stdout, /What you get:/); assert.match(one.stdout, /1900s factory floor/); assert.match(one.stdout, /How to connect it:/);
   const j = JSON.parse(video(w, ch, ['suggest', '--json']).stdout);
   assert.equal(j.version, 1);
-  assert.equal(j.categories.length, 5);
+  assert.equal(j.categories.length, 6);
   for (const c of j.categories) for (const t of c.tools) { assert.ok(['connected', 'not connected', 'dismissed'].includes(t.status)); assert.ok(t.id && t.name && t.example && t.connect); }
   assert.deepEqual(Object.keys(j.answers).sort(), ['asked', 'dismissed', 'have', 'none', 'other', 'tips']);
   const bad = video(w, ch, ['suggest', 'nope']);
