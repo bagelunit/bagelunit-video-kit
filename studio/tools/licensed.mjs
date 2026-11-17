@@ -27,7 +27,7 @@ export const EXTENSIONS = {
   lut: ['.cube'],
 };
 export const CREDITS_HEADING = 'Music and assets';
-export const REGISTER = path.join('brand', 'licensed', 'assets.json');
+export const REGISTER = 'brand/licensed/assets.json';   // forward slashes on every system: it is shown in messages and docs, and Windows accepts them for files
 const ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 const readJSON = (f, d) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return d; } };
