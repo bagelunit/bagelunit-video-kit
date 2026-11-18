@@ -5,7 +5,7 @@ Copyright (c) 2026 Susanoo Inc. All rights reserved.
 
 1. WHAT THIS LICENSE COVERS
 
-This license covers the BagelUnit Video Kit: the code, engines, scene library, guides, prompts, templates, tools and documentation in this repository (the "Kit"). It does not cover the third-party parts listed in section 7, which keep their own licenses.
+This license covers the bagelunit Video Kit: the code, engines, scene library, guides, prompts, templates, tools and documentation in this repository (the "Kit"). It does not cover the third-party parts listed in section 7, which keep their own licenses.
 
 2. WHAT YOU CAN DO
 
@@ -41,7 +41,7 @@ Susanoo Inc. may update this license, or withdraw it and stop distributing the K
 7. THIRD-PARTY PARTS AND YOUR OWN ACCOUNTS
 
   a. The fonts in studio/dashboard/fonts are under the SIL Open Font License 1.1 (see studio/dashboard/fonts/OFL.txt and studio/dashboard/fonts/FONTS.md).
-  b. The BagelUnit Reel Kit, which the Kit needs installed (for the voice tool, the headless browser, fonts and sound effects), is under its own license. Packages it installs, such as Playwright (Apache-2.0), are under their own licenses.
+  b. The bagelunit Reel Kit, which the Kit needs installed (for the voice tool, the headless browser, fonts and sound effects), is under its own license. Packages it installs, such as Playwright (Apache-2.0), are under their own licenses.
   c. Tools and libraries installed from elsewhere, such as ffmpeg, Node.js, Python packages and AI models, are separate projects under their own licenses and terms. They are not part of the Kit.
   d. You need your own accounts and keys for the services the Kit uses (for example Claude Code, ElevenLabs, Google Cloud and YouTube). Their terms apply to your use. The Kit contains no keys.
   e. Logos, footage, music, screenshots and trademarks you add to your content are your responsibility.
